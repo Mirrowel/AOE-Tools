@@ -98,10 +98,14 @@ class App(ctk.CTkToplevel):
         """Creates the upload tab with all main functionality."""
         upload_tab = self.tabview.tab("Upload")
 
+        # Create a scrollable frame to contain all upload widgets
+        scrollable_frame = ctk.CTkScrollableFrame(upload_tab, fg_color="transparent")
+        scrollable_frame.pack(fill="both", expand=True, padx=5, pady=5)
+
         # --- Asset Provider Selection ---
-        provider_frame = ctk.CTkFrame(upload_tab, fg_color=FLY_AGARIC_BLACK,
+        provider_frame = ctk.CTkFrame(scrollable_frame, fg_color=FLY_AGARIC_BLACK,
                                     border_color=FLY_AGARIC_RED, border_width=2)
-        provider_frame.pack(pady=10, padx=10, fill="x")
+        provider_frame.pack(pady=5, padx=10, fill="x")
         ctk.CTkLabel(provider_frame, text="🍄 Asset Providers",
                     font=ctk.CTkFont(size=14, weight="bold")).pack(pady=5, padx=10, anchor="w")
 
@@ -123,9 +127,9 @@ class App(ctk.CTkToplevel):
             self.provider_checkboxes[cb] = provider
 
         # --- File Input ---
-        file_frame = ctk.CTkFrame(upload_tab, fg_color=FLY_AGARIC_BLACK,
+        file_frame = ctk.CTkFrame(scrollable_frame, fg_color=FLY_AGARIC_BLACK,
                                 border_color=FLY_AGARIC_RED, border_width=2)
-        file_frame.pack(pady=10, padx=10, fill="both", expand=True)
+        file_frame.pack(pady=5, padx=10, fill="both", expand=True)
         ctk.CTkLabel(file_frame, text="📁 Files to Upload",
                     font=ctk.CTkFont(size=14, weight="bold")).pack(pady=5, padx=10, anchor="w")
 
@@ -161,9 +165,9 @@ class App(ctk.CTkToplevel):
 
 
         # --- Metadata Input ---
-        metadata_frame = ctk.CTkFrame(upload_tab, fg_color=FLY_AGARIC_BLACK,
+        metadata_frame = ctk.CTkFrame(scrollable_frame, fg_color=FLY_AGARIC_BLACK,
                                     border_color=FLY_AGARIC_RED, border_width=2)
-        metadata_frame.pack(pady=10, padx=10, fill="x")
+        metadata_frame.pack(pady=5, padx=10, fill="x")
 
         ctk.CTkLabel(metadata_frame, text="📝 Release Version (e.g., 1.2.3)",
                     font=ctk.CTkFont(size=14, weight="bold")).pack(pady=5, padx=10, anchor="w")
@@ -194,8 +198,8 @@ class App(ctk.CTkToplevel):
         self.notes_textbox.bind("<FocusOut>", self._on_notes_focus_out)
 
         # --- Execution ---
-        execution_frame = ctk.CTkFrame(upload_tab, fg_color="transparent")
-        execution_frame.pack(pady=10, padx=10, fill="x")
+        execution_frame = ctk.CTkFrame(scrollable_frame, fg_color="transparent")
+        execution_frame.pack(pady=5, padx=10, fill="x")
         self.create_release_button = ctk.CTkButton(
             execution_frame, text="🚀 Create Release",
             state="disabled",
@@ -205,41 +209,19 @@ class App(ctk.CTkToplevel):
             text_color=FLY_AGARIC_WHITE,
             font=ctk.CTkFont(size=14, weight="bold")
         )
-        self.create_release_button.pack(pady=10, padx=10, anchor="e")
+        self.create_release_button.pack(pady=2, padx=10, anchor="e")
 
-        # --- Progress Area ---
-        progress_frame = ctk.CTkFrame(upload_tab, fg_color=FLY_AGARIC_BLACK,
+        # --- Progress Log ---
+        progress_frame = ctk.CTkFrame(scrollable_frame, fg_color=FLY_AGARIC_BLACK,
                                     border_color=FLY_AGARIC_RED, border_width=2)
-        progress_frame.pack(pady=10, padx=10, fill="both", expand=True)
+        progress_frame.pack(pady=5, padx=10, fill="both", expand=True)
 
-        # Progress status
-        status_frame = ctk.CTkFrame(progress_frame, fg_color="transparent")
-        status_frame.pack(fill="x", padx=10, pady=5)
-
-        ctk.CTkLabel(status_frame, text="Current Task:",
-                    font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w")
-        self.status_label = ctk.CTkLabel(status_frame,
-                                       text="Ready to start...",
-                                       font=ctk.CTkFont(size=12))
-        self.status_label.pack(anchor="w")
-
-        # Progress bar
-        self.progress_bar = ctk.CTkProgressBar(
-            status_frame,
-            width=400,
-            height=20,
-            fg_color=FLY_AGARIC_BLACK,
-            progress_color=FLY_AGARIC_RED
-        )
-        self.progress_bar.pack(pady=5)
-        self.progress_bar.set(0)
-
-        # Progress log
-        ctk.CTkLabel(progress_frame, text="📋 Progress Log",
+        ctk.CTkLabel(progress_frame, text="📋 Log",
                     font=ctk.CTkFont(size=14, weight="bold")).pack(pady=5, padx=10, anchor="w")
         self.feedback_textbox = ctk.CTkTextbox(
             progress_frame,
             state="disabled",
+            height=100,  # Set a larger default height
             fg_color=FLY_AGARIC_WHITE,
             text_color=FLY_AGARIC_BLACK,
             border_color=FLY_AGARIC_RED,
@@ -674,21 +656,11 @@ class App(ctk.CTkToplevel):
         """Thread-safe method to log a message to the feedback queue."""
         self.feedback_queue.put(message)
 
-        # Update progress based on message content
-        if "started" in message.lower():
-            self.progress_value = 0.1
-        elif "processing" in message.lower() or "uploading" in message.lower():
-            self.progress_value = min(0.8, self.progress_value + 0.2)
-        elif "complete" in message.lower() or "success" in message.lower():
-            self.progress_value = 1.0
-        elif "error" in message.lower():
-            self.progress_value = 0.0
-
     def _process_feedback_queue(self):
         """Processes messages from the feedback queue and updates the GUI."""
         if self.is_closing:
             return
-            
+
         try:
             while True:
                 message = self.feedback_queue.get_nowait()
@@ -696,15 +668,8 @@ class App(ctk.CTkToplevel):
                 if self.feedback_textbox.winfo_exists():
                     self.feedback_textbox.configure(state="normal")
                     self.feedback_textbox.insert("end", f"{message}\n")
-                    self.feedback_textbox.yview_moveto(1.0)
+                    self.feedback_textbox.see("end")  # Scroll to the end
                     self.feedback_textbox.configure(state="disabled")
-
-                if self.status_label.winfo_exists():
-                    self.last_status_message = message
-                    self.status_label.configure(text=message[:50] + "..." if len(message) > 50 else message)
-                
-                if self.progress_bar.winfo_exists():
-                    self.progress_bar.set(self.progress_value)
 
         except queue.Empty:
             pass
@@ -723,11 +688,7 @@ class App(ctk.CTkToplevel):
         self.feedback_textbox.delete("1.0", "end")
         self.feedback_textbox.configure(state="disabled")
 
-        # Reset progress bar and status
-        self.progress_value = 0.0
-        self.progress_bar.set(0.0)
-        self.status_label.configure(text="🚀 Launching release process...")
-        self.last_status_message = "Starting..."
+        self._log_status("🚀 Launching release process...")
 
         selected_providers = [
             provider
