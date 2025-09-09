@@ -1,0 +1,8 @@
+PyGithub
+requests
+setuptools
+customtkinter
+GitPython
+python-dotenv
+packaging
+tkinterdnd2
