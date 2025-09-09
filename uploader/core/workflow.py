@@ -66,14 +66,17 @@ class ReleaseWorkflow:
         return manifest_path
 
     def _upload_asset(
-        self, provider: AssetProvider, file_path: str, version: str
+        self, provider: AssetProvider, file_path: str, version: str, notes: str
     ) -> Tuple[str, str, str]:
         """Wrapper for uploading a single asset to a single provider."""
         provider_name = provider.get_name()
         file_name = os.path.basename(file_path)
         self._log(f"Uploading '{file_name}' to {provider_name}...")
         try:
-            url = provider.upload_asset(file_path, version)
+            if provider_name == "GitHub Releases":
+                url = provider.upload_asset(file_path, version, notes)
+            else:
+                url = provider.upload_asset(file_path, version)
             self._log(f"Successfully uploaded '{file_name}' to {provider_name}: {url}")
             return provider_name, file_name, url
         except Exception as e:
@@ -104,7 +107,7 @@ class ReleaseWorkflow:
 
             with ThreadPoolExecutor(max_workers=len(self.asset_providers) * 2) as executor:
                 futures = [
-                    executor.submit(self._upload_asset, provider, file_path, self.version)
+                    executor.submit(self._upload_asset, provider, file_path, self.version, self.notes)
                     for provider in self.asset_providers
                     for file_path in files_to_upload
                 ]
@@ -114,23 +117,35 @@ class ReleaseWorkflow:
                     if url:
                         if file_name.endswith(".zip"):
                             download_urls[provider_name] = url
-                        else:
-                            manifest_urls[provider_name] = url
+                        elif file_name.endswith(".json"):
+                            # Exclude manifest URL from GitHub Releases provider to avoid rate limits
+                            if provider_name != "GitHub Releases":
+                                manifest_urls[provider_name] = url
             
-            if not download_urls or not manifest_urls:
-                raise RuntimeError("Failed to upload assets to any provider. Aborting.")
+            # The manifest from the index provider is canonical, so we only need the zip from asset providers.
+            if not download_urls:
+                raise RuntimeError("Failed to upload zip archive to any provider. Aborting.")
             
             self._log("Parallel asset uploads completed.")
+
+            # Step 4: Commit manifest to index repo
+            self._log("Committing manifest to index repository...")
+            manifest_index_url = self.index_provider.commit_manifest_file(manifest_path, self.version)
+            self._log(f"Manifest committed to index repo: {manifest_index_url}")
             
-            # Step 4: Update Version Index
+            # Step 5: Update Version Index
             self._log("Updating version index...")
             current_index = self.index_provider.get_index_content()
             
+            # Add the URL from the index repo to the manifest_urls dictionary
+            # This makes it the canonical source, but we still track mirrors
+            manifest_urls[self.index_provider.get_name()] = manifest_index_url
+
             new_entry = {
                 "version": self.version,
                 "release_notes": self.notes,
                 "manifest_urls": manifest_urls,
-                "download_urls": download_urls
+                "download_urls": download_urls,
             }
             
             current_index.append(new_entry)
@@ -143,12 +158,11 @@ class ReleaseWorkflow:
             self._log("Version index updated successfully.")
 
         finally:
-            # Step 5: Cleanup
+            # Step 6: Cleanup
             self._log("Cleaning up temporary files...")
-            for path in [zip_path, manifest_path]:
-                if os.path.exists(path):
-                    os.remove(path)
-            os.rmdir(temp_dir)
+            if temp_dir and os.path.exists(temp_dir):
+                import shutil
+                shutil.rmtree(temp_dir)
             self._log("Cleanup complete.")
 
         self._log(f"Successfully completed release for version {self.version}!")

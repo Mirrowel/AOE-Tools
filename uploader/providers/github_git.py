@@ -3,6 +3,7 @@ import json
 import shutil
 import git
 from uploader.providers.base import IndexProvider
+import logging
 
 class GitHubGitProvider(IndexProvider):
     def __init__(self, clone_url: str, branch: str, local_folder: str, token: str):
@@ -51,8 +52,9 @@ class GitHubGitProvider(IndexProvider):
             return json.load(f)
 
     def update_index_content(self, new_content: list):
-        version = new_content.get("version", "unknown")
-        index_path = os.path.join(self.local_folder, 'versions.json')
+        # Assuming the latest version is the first in the list
+        version = new_content[0].get("version", "unknown") if new_content else "unknown"
+        index_path = os.path.abspath(os.path.join(self.local_folder, 'versions.json'))
         with open(index_path, 'w') as f:
             json.dump(new_content, f, indent=4)
         
@@ -60,3 +62,28 @@ class GitHubGitProvider(IndexProvider):
         commit_message = f"Update versions.json for release v{version}"
         self.repo.index.commit(commit_message)
         self.repo.remotes.origin.push()
+
+    def commit_manifest_file(self, file_path: str, version: str) -> str:
+        """Commits a manifest file to a 'manifests' directory and returns its URL."""
+        manifests_dir = os.path.abspath(os.path.join(self.local_folder, 'manifests'))
+        os.makedirs(manifests_dir, exist_ok=True)
+        
+        new_manifest_path = os.path.join(manifests_dir, f"manifest-v{version}.json")
+        shutil.copy(file_path, new_manifest_path)
+        
+        self.repo.index.add([new_manifest_path])
+        commit_message = f"Add manifest for release v{version}"
+        self.repo.index.commit(commit_message)
+        self.repo.remotes.origin.push()
+        
+        # Construct the raw GitHub URL
+        # Assumes the clone URL is in the format https://github.com/user/repo.git
+        base_url = self.clone_url.replace(".git", "")
+        # This is a bit of a hack. A more robust solution might use the GitHub API
+        # to get the raw URL, but this is simpler for now.
+        raw_url = f"{base_url}/raw/{self.branch}/manifests/manifest-v{version}.json"
+        
+        return raw_url
+
+    def get_name(self) -> str:
+        return "GitHub Git"
