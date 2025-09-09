@@ -33,10 +33,12 @@ class App(ctk.CTkToplevel):
 
         # Graceful shutdown flag
         self.is_closing = False
+        self.catbox_user_hash_value = "" # Persist hash during UI toggles
 
         # Initialize progress tracking
         self.progress_value = 0.0
         self.last_status_message = ""
+        self.NOTES_PLACEHOLDER = "Add your release notes here..."
 
         self.file_paths: List[str] = []
         self.feedback_queue = queue.Queue()
@@ -137,6 +139,7 @@ class App(ctk.CTkToplevel):
             border_width=2
         )
         self.file_list_textbox.pack(pady=5, padx=10, fill="both", expand=True)
+        self._update_file_list_display()  # Set initial placeholder
 
         # Enable drag and drop functionality
         self.file_list_textbox.drop_target_register(DND_FILES)
@@ -185,6 +188,10 @@ class App(ctk.CTkToplevel):
             border_width=2
         )
         self.notes_textbox.pack(pady=5, padx=10, fill="x")
+        self.notes_textbox.insert("1.0", self.NOTES_PLACEHOLDER)
+        self.notes_textbox.configure(text_color="grey")
+        self.notes_textbox.bind("<FocusIn>", self._on_notes_focus_in)
+        self.notes_textbox.bind("<FocusOut>", self._on_notes_focus_out)
 
         # --- Execution ---
         execution_frame = ctk.CTkFrame(upload_tab, fg_color="transparent")
@@ -448,15 +455,21 @@ class App(ctk.CTkToplevel):
         is_anonymous = self.catbox_anonymous_var.get()
         hash_widget = self.settings_widgets['catbox_user_hash']
         
-        current_val = hash_widget.get()
-
         if is_anonymous:
+            current_text = hash_widget.get().strip()
+            # If the field contains a real hash, store it before overwriting
+            if current_text and current_text != "Anonymous upload":
+                self.catbox_user_hash_value = current_text
+            
+            hash_widget.configure(show="")  # Make text visible
+            hash_widget.delete(0, 'end')
+            hash_widget.insert(0, "Anonymous upload")
             hash_widget.configure(state="disabled")
-            # If the field is empty, show the placeholder. Otherwise, keep the value.
-            if not current_val:
-                hash_widget.configure(placeholder_text="Anonymous upload")
         else:
-            hash_widget.configure(state="normal", placeholder_text="Enter your user hash")
+            hash_widget.configure(state="normal", show="*")  # Mask text
+            hash_widget.delete(0, 'end')
+            # Restore the stored hash
+            hash_widget.insert(0, self.catbox_user_hash_value)
 
     def _save_settings(self):
         """Save current GUI settings to .env file."""
@@ -472,29 +485,24 @@ class App(ctk.CTkToplevel):
                 github_token_for_index = self._get_entry_text('github_token_for_index')
                 github_token_for_assets = self._get_entry_text('github_token_for_assets')
 
-            # Get catbox hash, respecting anonymous toggle for the final value
-            catbox_widget = self.settings_widgets.get('catbox_user_hash')
-            catbox_hash_to_save = catbox_widget.get().strip() if catbox_widget else ""
+            # Prepare settings payload
+            settings_to_save = {
+                'index_git_clone_url': self._get_entry_text('index_git_clone_url'),
+                'index_git_branch': self._get_entry_text('index_git_branch'),
+                'index_git_local_folder': self._get_entry_text('index_git_local_folder'),
+                'github_token_for_index': github_token_for_index,
+                'github_asset_repo': self._get_entry_text('github_asset_repo'),
+                'github_token_for_assets': github_token_for_assets,
+                'ui_use_single_token': self.use_single_token_var.get(),
+                'ui_catbox_anonymous': self.catbox_anonymous_var.get()
+            }
 
-            # Do not save placeholder text, and ensure anonymous saves an empty string
-            if self.catbox_anonymous_var.get() or \
-               (catbox_widget and catbox_hash_to_save == catbox_widget.cget("placeholder_text")):
-                catbox_hash_to_save = ""
+            # Only add the catbox hash to the payload if anonymous is OFF.
+            # If anonymous is ON, the key is omitted, and the saved value is untouched.
+            if not self.catbox_anonymous_var.get():
+                settings_to_save['catbox_user_hash'] = self.settings_widgets['catbox_user_hash'].get().strip()
 
-            settings.save_settings(
-                # Core settings
-                index_git_clone_url=self._get_entry_text('index_git_clone_url'),
-                index_git_branch=self._get_entry_text('index_git_branch'),
-                index_git_local_folder=self._get_entry_text('index_git_local_folder'),
-                github_token_for_index=github_token_for_index,
-                github_asset_repo=self._get_entry_text('github_asset_repo'),
-                github_token_for_assets=github_token_for_assets,
-                catbox_user_hash=catbox_hash_to_save,
-                
-                # UI state settings
-                ui_use_single_token=self.use_single_token_var.get(),
-                ui_catbox_anonymous=self.catbox_anonymous_var.get()
-            )
+            settings.save_settings(**settings_to_save)
             # Re-configure providers with new settings
             self._configure_providers()
             self._log_status("Settings saved successfully!")
@@ -518,11 +526,11 @@ class App(ctk.CTkToplevel):
         self._set_entry_text('github_asset_repo', settings.GITHUB_ASSET_REPO)
         
         # --- Catbox ---
+        self.catbox_user_hash_value = settings.CATBOX_USER_HASH or ""
         catbox_widget = self.settings_widgets.get('catbox_user_hash')
         if catbox_widget:
             catbox_widget.delete(0, 'end')
-            if settings.CATBOX_USER_HASH: # Only insert if it's not None or empty
-                catbox_widget.insert(0, settings.CATBOX_USER_HASH)
+            catbox_widget.insert(0, self.catbox_user_hash_value)
         
         # --- UI State ---
         self.use_single_token_var.set(settings.UI_USE_SINGLE_TOKEN)
@@ -615,6 +623,18 @@ class App(ctk.CTkToplevel):
             self.create_release_button.configure(state="normal")
         else:
             self.create_release_button.configure(state="disabled")
+
+    def _on_notes_focus_in(self, event=None):
+        """Removes placeholder text on focus."""
+        if self.notes_textbox.get("1.0", "end-1c").strip() == self.NOTES_PLACEHOLDER:
+            self.notes_textbox.delete("1.0", "end")
+            self.notes_textbox.configure(text_color=FLY_AGARIC_BLACK)
+
+    def _on_notes_focus_out(self, event=None):
+        """Adds placeholder text if entry is empty."""
+        if not self.notes_textbox.get("1.0", "end-1c").strip():
+            self.notes_textbox.insert("1.0", self.NOTES_PLACEHOLDER)
+            self.notes_textbox.configure(text_color="grey")
     
     def _toggle_ui_elements(self, enabled: bool):
         """Enable or disable all interactive UI elements."""
@@ -715,9 +735,13 @@ class App(ctk.CTkToplevel):
             if cb.get()
         ]
 
+        notes_text = self.notes_textbox.get("1.0", "end-1c")
+        if notes_text.strip() == self.NOTES_PLACEHOLDER:
+            notes_text = ""
+
         workflow = ReleaseWorkflow(
             version=self.version_entry.get().strip(),
-            notes=self.notes_textbox.get("1.0", "end-1c"),
+            notes=notes_text,
             file_paths=self.file_paths,
             asset_providers=selected_providers,
             index_provider=self.index_provider,
