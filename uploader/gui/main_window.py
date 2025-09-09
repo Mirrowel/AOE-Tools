@@ -31,6 +31,9 @@ class App(ctk.CTkToplevel):
         self.title("🍄 AO Uploader")
         self.geometry("900x800")
 
+        # Graceful shutdown flag
+        self.is_closing = False
+
         # Initialize progress tracking
         self.progress_value = 0.0
         self.last_status_message = ""
@@ -44,6 +47,9 @@ class App(ctk.CTkToplevel):
 
         # Load initial values from settings now that UI is ready
         self._load_settings_from_env()
+
+        # Handle window closing
+        self.protocol("WM_DELETE_WINDOW", self._on_closing)
 
     def _configure_providers(self):
         """Instantiates all configured providers."""
@@ -660,25 +666,35 @@ class App(ctk.CTkToplevel):
 
     def _process_feedback_queue(self):
         """Processes messages from the feedback queue and updates the GUI."""
+        if self.is_closing:
+            return
+            
         try:
             while True:
                 message = self.feedback_queue.get_nowait()
-                self.feedback_textbox.configure(state="normal")
-                self.feedback_textbox.insert("end", f"{message}\n")
-                self.feedback_textbox.yview_moveto(1.0)  # Auto-scroll
-                self.feedback_textbox.configure(state="disabled")
+                # Check if widgets still exist before updating
+                if self.feedback_textbox.winfo_exists():
+                    self.feedback_textbox.configure(state="normal")
+                    self.feedback_textbox.insert("end", f"{message}\n")
+                    self.feedback_textbox.yview_moveto(1.0)
+                    self.feedback_textbox.configure(state="disabled")
 
-                # Update status label with the latest message
-                self.last_status_message = message
-                self.status_label.configure(text=message[:50] + "..." if len(message) > 50 else message)
-
-                # Update progress bar
-                self.progress_bar.set(self.progress_value)
+                if self.status_label.winfo_exists():
+                    self.last_status_message = message
+                    self.status_label.configure(text=message[:50] + "..." if len(message) > 50 else message)
+                
+                if self.progress_bar.winfo_exists():
+                    self.progress_bar.set(self.progress_value)
 
         except queue.Empty:
             pass
         finally:
             self.after(100, self._process_feedback_queue)
+
+    def _on_closing(self):
+        """Handle the window closing event."""
+        self.is_closing = True
+        self.master.destroy()  # Destroy the root window to ensure the app exits
 
     def start_release_process(self):
         """Starts the release workflow in a separate thread."""
@@ -709,6 +725,7 @@ class App(ctk.CTkToplevel):
         )
 
         thread = threading.Thread(target=self._run_workflow_in_thread, args=(workflow,))
+        thread.daemon = True  # Ensure thread doesn't block app exit
         thread.start()
 
     def _run_workflow_in_thread(self, workflow: ReleaseWorkflow):
