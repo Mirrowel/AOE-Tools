@@ -149,7 +149,6 @@ class ReleaseWorkflow:
 
             new_entry = {
                 "version": self.version,
-                "release_notes": self.notes,
                 "manifest_urls": manifest_urls,
                 "download_urls": download_urls,
                 "latest": True,

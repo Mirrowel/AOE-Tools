@@ -96,5 +96,36 @@ class GitHubGitProvider(IndexProvider):
         self.repo.index.commit(commit_message)
         self.repo.remotes.origin.push()
 
+    def save_all_changes(self, versions_content: list, manifests_to_update: dict):
+        """Saves versions.json and any modified manifests in a single commit."""
+        self.repo.remotes.origin.pull()
+
+        paths_to_add = []
+
+        # Write versions.json
+        index_path = os.path.abspath(os.path.join(self.local_folder, 'versions.json'))
+        with open(index_path, 'w') as f:
+            json.dump(versions_content, f, indent=4)
+        paths_to_add.append(index_path)
+
+        # Write any modified manifests
+        if manifests_to_update:
+            manifests_dir = os.path.abspath(os.path.join(self.local_folder, 'manifests'))
+            for version, manifest_data in manifests_to_update.items():
+                manifest_path = os.path.join(manifests_dir, f"manifest-v{version}.json")
+                if os.path.exists(manifests_dir):
+                    with open(manifest_path, 'w') as f:
+                        json.dump(manifest_data, f, indent=4)
+                    paths_to_add.append(manifest_path)
+
+        if not paths_to_add:
+            logging.warning("No changes to commit.")
+            return
+
+        self.repo.index.add(paths_to_add)
+        commit_message = "Update release data from AO Uploader"
+        self.repo.index.commit(commit_message)
+        self.repo.remotes.origin.push()
+
     def get_name(self) -> str:
         return "GitHub Git"

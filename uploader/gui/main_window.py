@@ -27,6 +27,35 @@ FLY_AGARIC_WHITE = "#F9F6EE"
 FLY_AGARIC_BLACK = "#2C1810"
 
 
+class NotesEditPopup(ctk.CTkToplevel):
+    def __init__(self, master, current_notes, save_callback):
+        super().__init__(master)
+
+        self.title("Edit Release Notes")
+        self.geometry("500x400")
+        self.save_callback = save_callback
+
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(0, weight=1)
+
+        self.notes_textbox = ctk.CTkTextbox(self, wrap="word", height=300)
+        self.notes_textbox.grid(row=0, column=0, columnspan=2, padx=10, pady=10, sticky="nsew")
+        self.notes_textbox.insert("1.0", current_notes)
+
+        self.save_button = ctk.CTkButton(self, text="Save", command=self._on_save)
+        self.save_button.grid(row=1, column=0, padx=10, pady=10, sticky="ew")
+        
+        self.cancel_button = ctk.CTkButton(self, text="Cancel", command=self.destroy)
+        self.cancel_button.grid(row=1, column=1, padx=10, pady=10, sticky="ew")
+        
+        self.grab_set() # Make the popup modal
+        self.focus_force()
+
+    def _on_save(self):
+        updated_notes = self.notes_textbox.get("1.0", "end-1c")
+        self.save_callback(updated_notes)
+        self.destroy()
+
 class App(ctk.CTkToplevel):
     def __init__(self, master=None):
         super().__init__(master)
@@ -36,6 +65,7 @@ class App(ctk.CTkToplevel):
 
         # Graceful shutdown flag
         self.is_closing = False
+        self.is_fetching_releases = False
         self.catbox_user_hash_value = "" # Persist hash during UI toggles
 
         # Initialize progress tracking
@@ -274,7 +304,11 @@ class App(ctk.CTkToplevel):
         self.save_changes_button.pack(side="right")
 
         # Scrollable frame for release list
-        self.releases_scroll_frame = ctk.CTkScrollableFrame(main_frame, label_text="Available Releases")
+        self.releases_scroll_frame = ctk.CTkScrollableFrame(
+            main_frame,
+            label_text="Available Releases",
+            orientation="horizontal"
+        )
         self.releases_scroll_frame.grid(row=1, column=0, sticky="nsew")
 
         self.release_widgets = [] # To hold references to the widgets for each release
@@ -776,8 +810,14 @@ class App(ctk.CTkToplevel):
 
     def _start_fetch_releases(self):
         """Fetches release data in a background thread."""
+        if self.is_fetching_releases:
+            self._log_status("A refresh is already in progress.")
+            return
+
         self._log_status("Fetching release information...")
+        self.is_fetching_releases = True
         self.refresh_releases_button.configure(state="disabled")
+
         thread = threading.Thread(target=self._fetch_releases_thread)
         thread.daemon = True
         thread.start()
@@ -801,9 +841,11 @@ class App(ctk.CTkToplevel):
                     version_info = future_to_version[future]
                     try:
                         manifest_data = future.result()
-                        # Combine version info with manifest data
-                        combined_data = {**version_info, **manifest_data}
-                        full_release_data.append(combined_data)
+                        # Keep data sources separate to avoid contamination
+                        full_release_data.append({
+                            "version_data": version_info,
+                            "manifest_data": manifest_data
+                        })
                     except Exception as e:
                         logging.error(f"Failed to fetch manifest for {version_info.get('version')}: {e}")
 
@@ -814,8 +856,9 @@ class App(ctk.CTkToplevel):
             logging.error(f"Failed to fetch versions.json: {e}", exc_info=True)
             self._log_status(f"ERROR: Failed to fetch release index: {e}")
         finally:
-            # Re-enable the refresh button
-            self.after(0, self.refresh_releases_button.configure, {"state": "normal"})
+            # Re-enable the refresh button and reset the flag
+            self.after(0, lambda: self.refresh_releases_button.configure(state="normal"))
+            self.is_fetching_releases = False
 
     def _fetch_manifest(self, url: str) -> dict:
         """Fetches and parses a single manifest file from a URL."""
@@ -843,26 +886,33 @@ class App(ctk.CTkToplevel):
             self._no_releases_label.destroy()
 
         # Configure grid columns for the table
-        self.releases_scroll_frame.grid_columnconfigure(0, weight=0)  # Checkbox
-        self.releases_scroll_frame.grid_columnconfigure(1, weight=1)  # Version
-        self.releases_scroll_frame.grid_columnconfigure(2, weight=2)  # Upload Date
-        self.releases_scroll_frame.grid_columnconfigure(3, weight=1)  # SHA
+        self.releases_scroll_frame.grid_columnconfigure(0, weight=0, minsize=50)   # Checkbox
+        self.releases_scroll_frame.grid_columnconfigure(1, weight=1, minsize=100)  # Version
+        self.releases_scroll_frame.grid_columnconfigure(2, weight=2, minsize=150)  # Upload Date
+        self.releases_scroll_frame.grid_columnconfigure(3, weight=1, minsize=150)  # SHA
+        self.releases_scroll_frame.grid_columnconfigure(4, weight=3, minsize=200)  # Release Notes
+
 
         # Create Header
         header_font = ctk.CTkFont(weight="bold")
-        headers = ["Latest", "Version", "Upload Date", "SHA256"]
+        headers = ["Latest", "Version", "Upload Date", "SHA256", "Release Notes"]
         for col, header_text in enumerate(headers):
             header = ctk.CTkLabel(self.releases_scroll_frame, text=header_text, font=header_font)
             header.grid(row=0, column=col, padx=10, pady=5, sticky="w")
 
         # Create Table Rows
-        for i, data in enumerate(release_data):
+        for i, release_entry in enumerate(release_data):
             row_index = i + 1  # Start after header row
             
-            version = data.get("version", "N/A")
-            upload_date = data.get("upload_date", "N/A")
-            sha = data.get("zip_sha256", "N/A")[:12] + "..."
-            is_latest = data.get("latest", False)
+            version_data = release_entry.get("version_data", {})
+            manifest_data = release_entry.get("manifest_data", {})
+
+            version = version_data.get("version", "N/A")
+            upload_date = manifest_data.get("upload_date", "N/A")
+            sha = manifest_data.get("zip_sha256", "N/A")
+            is_latest = version_data.get("latest", False)
+            release_notes = manifest_data.get("release_notes", "")
+
 
             # Latest Checkbox
             latest_var = ctk.BooleanVar(value=is_latest)
@@ -870,67 +920,116 @@ class App(ctk.CTkToplevel):
                 self.releases_scroll_frame,
                 text="",
                 variable=latest_var,
-                command=lambda i=i: self._on_latest_checkbox_change(i),
+                command=lambda var=latest_var: self._on_latest_checkbox_change(var),
                 fg_color=FLY_AGARIC_RED
             )
             checkbox.grid(row=row_index, column=0, padx=10, pady=5)
 
-            # Version Label
+            # Version Label (not editable)
             version_label = ctk.CTkLabel(self.releases_scroll_frame, text=version)
-            version_label.grid(row=row_index, column=1, padx=10, pady=5, sticky="w")
+            version_label.grid(row=row_index, column=1, padx=10, pady=5, sticky="ew")
 
-            # Upload Date Label
-            date_label = ctk.CTkLabel(self.releases_scroll_frame, text=upload_date)
-            date_label.grid(row=row_index, column=2, padx=10, pady=5, sticky="w")
+            # Upload Date Entry
+            date_entry = ctk.CTkEntry(self.releases_scroll_frame)
+            date_entry.insert(0, upload_date)
+            date_entry.grid(row=row_index, column=2, padx=10, pady=5, sticky="ew")
+            date_entry.bind("<KeyRelease>", self._on_widget_change)
             
-            # SHA Label
-            sha_label = ctk.CTkLabel(self.releases_scroll_frame, text=sha)
-            sha_label.grid(row=row_index, column=3, padx=10, pady=5, sticky="w")
+            # SHA Label (not editable)
+            sha_label = ctk.CTkLabel(self.releases_scroll_frame, text=sha[:12] + "...")
+            sha_label.grid(row=row_index, column=3, padx=10, pady=5, sticky="ew")
+
+            # Release Notes Button
+            notes_button = ctk.CTkButton(
+                self.releases_scroll_frame,
+                text="Edit Notes",
+                command=lambda i=i: self._open_notes_popup(i)
+            )
+            notes_button.grid(row=row_index, column=4, padx=10, pady=5, sticky="ew")
+
+            # Hidden notes entry to store the value
+            notes_var = ctk.StringVar(value=release_notes)
+
 
             self.release_widgets.append({
                 "checkbox": checkbox,
                 "version_label": version_label,
-                "date_label": date_label,
+                "date_entry": date_entry,
                 "sha_label": sha_label,
-                "data": data,
-                "latest_var": latest_var,
-                "index": i
+                "notes_button": notes_button,
+                "notes_var": notes_var,
+                "version_data": version_data,
+                "manifest_data": manifest_data,
+                "latest_var": latest_var
             })
         self._log_status("Release information updated.")
     
-    def _on_latest_checkbox_change(self, selected_index: int):
-        """Ensures only one checkbox can be selected as 'latest'."""
-        for i, widget_info in enumerate(self.release_widgets):
-            if i != selected_index:
-                widget_info['latest_var'].set(False)
+    def _open_notes_popup(self, index: int):
+        """Opens a popup to edit the release notes for a specific release."""
+        widget_info = self.release_widgets[index]
+        current_notes = widget_info['notes_var'].get()
+
+        def save_callback(new_notes):
+            widget_info['notes_var'].set(new_notes)
+            self._on_widget_change() # Trigger save button enablement
+
+        NotesEditPopup(self, current_notes, save_callback)
+
+    def _on_latest_checkbox_change(self, changed_var):
+        """Ensures only one 'latest' checkbox is selected at a time."""
+        # If the checkbox was checked, uncheck all others.
+        if changed_var.get():
+            for widget_info in self.release_widgets:
+                if widget_info['latest_var'] is not changed_var:
+                    widget_info['latest_var'].set(False)
+        self._on_widget_change()
+
+    def _on_widget_change(self, event=None):
+        """Enables the save button when any editable widget is changed."""
         self.save_changes_button.configure(state="normal")
     
     def _save_release_changes(self):
-        """Saves the changes made in the 'Manage Releases' tab."""
-        self._log_status("Saving changes to versions.json...")
+        """Saves all changes from the 'Manage Releases' tab to versions.json and manifest files."""
+        self._log_status("Saving release changes...")
         
-        updated_versions = []
+        updated_versions_content = []
+        manifests_to_update = {}
+
         for widget_info in self.release_widgets:
-            version_data = widget_info['data']
-            is_latest = widget_info['latest_var'].get()
-            
-            # Build the entry for versions.json from the original data
-            entry = {
-                "version": version_data.get("version"),
-                "release_notes": version_data.get("release_notes"),
-                "manifest_urls": version_data.get("manifest_urls"),
-                "download_urls": version_data.get("download_urls"),
+            original_version_data = widget_info['version_data']
+            original_manifest_data = widget_info['manifest_data']
+            version = original_version_data.get("version")
+
+            # --- Reconstruct manifest data ---
+            new_manifest_data = {
+                "version": original_manifest_data.get("version"),
+                "release_notes": widget_info['notes_var'].get(),
+                "upload_date": widget_info['date_entry'].get(),
+                "zip_sha256": original_manifest_data.get("zip_sha256") # Not editable
             }
+
+            # Only add manifest to the update list if it has actually changed
+            if new_manifest_data != original_manifest_data:
+                manifests_to_update[version] = new_manifest_data
+
+            # --- Reconstruct versions.json entry ---
+            version_entry = original_version_data.copy() # Start with original data
+            is_latest = widget_info['latest_var'].get()
+
             if is_latest:
-                entry["latest"] = True
+                version_entry["latest"] = True
+            else:
+                # Ensure the 'latest' key is removed if the box is unchecked
+                version_entry.pop("latest", None)
             
-            updated_versions.append(entry)
+            updated_versions_content.append(version_entry)
 
         try:
-            # Using the new generic save method
-            self.index_provider.save_index_content(updated_versions)
-            self._log_status("Successfully saved changes to versions.json!")
+            self.index_provider.save_all_changes(updated_versions_content, manifests_to_update)
+            self._log_status("Successfully saved all changes!")
             self.save_changes_button.configure(state="disabled")
+            # Refresh the data to show the latest state
+            self._start_fetch_releases()
         except Exception as e:
-            logging.error(f"Failed to save versions.json: {e}", exc_info=True)
+            logging.error(f"Failed to save changes: {e}", exc_info=True)
             self._log_status(f"ERROR: Failed to save changes: {e}")
