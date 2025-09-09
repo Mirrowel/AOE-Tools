@@ -85,5 +85,16 @@ class GitHubGitProvider(IndexProvider):
         
         return raw_url
 
+    def save_index_content(self, new_content: list):
+        """Saves the entire index file with a generic commit message."""
+        index_path = os.path.abspath(os.path.join(self.local_folder, 'versions.json'))
+        with open(index_path, 'w') as f:
+            json.dump(new_content, f, indent=4)
+        
+        self.repo.index.add([index_path])
+        commit_message = "Update versions.json from AO Uploader"
+        self.repo.index.commit(commit_message)
+        self.repo.remotes.origin.push()
+
     def get_name(self) -> str:
         return "GitHub Git"

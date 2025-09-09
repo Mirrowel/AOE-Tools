@@ -5,6 +5,7 @@ import os
 import tempfile
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from typing import Callable, Dict, List, Tuple
 
 from uploader.providers.base import AssetProvider, IndexProvider
@@ -58,6 +59,7 @@ class ReleaseWorkflow:
             "version": self.version,
             "release_notes": self.notes,
             "zip_sha256": zip_hash,
+            "upload_date": datetime.now(timezone.utc).isoformat(),
         }
         self._log(f"Creating manifest.json at: {manifest_path}")
         with open(manifest_path, "w") as f:
@@ -141,18 +143,20 @@ class ReleaseWorkflow:
             # This makes it the canonical source, but we still track mirrors
             manifest_urls[self.index_provider.get_name()] = manifest_index_url
 
+            # Ensure no other entry is marked as latest
+            for entry in current_index:
+                entry.pop("latest", None)
+
             new_entry = {
                 "version": self.version,
                 "release_notes": self.notes,
                 "manifest_urls": manifest_urls,
                 "download_urls": download_urls,
+                "latest": True,
             }
-            
-            current_index.append(new_entry)
-            
-            # Sort by version
-            from packaging.version import parse
-            current_index.sort(key=lambda x: parse(x["version"]), reverse=True)
+
+            # Add the new release to the top of the list
+            current_index.insert(0, new_entry)
             
             self.index_provider.update_index_content(current_index)
             self._log("Version index updated successfully.")

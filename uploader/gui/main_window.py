@@ -6,6 +6,9 @@ import threading
 from tkinter import filedialog
 from typing import Dict, List
 from tkinterdnd2 import DND_FILES
+from concurrent.futures import ThreadPoolExecutor
+import requests
+import json
 
 from ..config import settings
 from ..core.workflow import ReleaseWorkflow
@@ -81,6 +84,7 @@ class App(ctk.CTkToplevel):
 
         # Create tabs
         self.tabview.add("Upload")
+        self.tabview.add("Manage Releases")
         self.tabview.add("Settings")
 
         # Apply custom styling to tabs
@@ -90,6 +94,9 @@ class App(ctk.CTkToplevel):
 
         # Set up Upload tab
         self._create_upload_tab()
+
+        # Set up Manage Releases tab
+        self._create_manage_releases_tab()
 
         # Set up Settings tab
         self._create_settings_tab()
@@ -228,6 +235,49 @@ class App(ctk.CTkToplevel):
             border_width=2
         )
         self.feedback_textbox.pack(pady=5, padx=10, fill="both", expand=True)
+
+    def _create_manage_releases_tab(self):
+        """Creates the tab for managing existing releases."""
+        manage_tab = self.tabview.tab("Manage Releases")
+
+        # Main frame for the tab
+        main_frame = ctk.CTkFrame(manage_tab, fg_color="transparent")
+        main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        main_frame.grid_columnconfigure(0, weight=1)
+        main_frame.grid_rowconfigure(1, weight=1)
+
+        # Action buttons
+        action_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        action_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+
+        self.refresh_releases_button = ctk.CTkButton(
+            action_frame,
+            text="🔄 Refresh Releases",
+            command=self._start_fetch_releases,
+            fg_color=FLY_AGARIC_RED,
+            hover_color=FLY_AGARIC_WHITE,
+            text_color=FLY_AGARIC_WHITE
+        )
+        self.refresh_releases_button.pack(side="left")
+        
+        self.save_changes_button = ctk.CTkButton(
+            action_frame,
+            text="💾 Save Changes",
+            command=self._save_release_changes,
+            state="disabled",
+            fg_color=FLY_AGARIC_BLACK,
+            hover_color=FLY_AGARIC_RED,
+            border_color=FLY_AGARIC_RED,
+            border_width=2
+        )
+        self.save_changes_button.pack(side="right")
+
+        # Scrollable frame for release list
+        self.releases_scroll_frame = ctk.CTkScrollableFrame(main_frame, label_text="Available Releases")
+        self.releases_scroll_frame.grid(row=1, column=0, sticky="nsew")
+
+        self.release_widgets = [] # To hold references to the widgets for each release
 
     def _create_settings_tab(self):
         """Creates the settings tab with configuration options."""
@@ -723,3 +773,164 @@ class App(ctk.CTkToplevel):
         finally:
             # Schedule the UI update to run in the main thread
             self.after(0, self._toggle_ui_elements, True)
+
+    def _start_fetch_releases(self):
+        """Fetches release data in a background thread."""
+        self._log_status("Fetching release information...")
+        self.refresh_releases_button.configure(state="disabled")
+        thread = threading.Thread(target=self._fetch_releases_thread)
+        thread.daemon = True
+        thread.start()
+
+    def _fetch_releases_thread(self):
+        """The actual fetching and processing of release data."""
+        try:
+            versions_data = self.index_provider.get_index_content()
+            
+            # Use a thread pool to fetch manifest files in parallel
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                # Create a future for each manifest URL
+                future_to_version = {
+                    executor.submit(self._fetch_manifest, url): version
+                    for version in versions_data
+                    for url in version.get("manifest_urls", {}).values()
+                }
+
+                full_release_data = []
+                for future in future_to_version:
+                    version_info = future_to_version[future]
+                    try:
+                        manifest_data = future.result()
+                        # Combine version info with manifest data
+                        combined_data = {**version_info, **manifest_data}
+                        full_release_data.append(combined_data)
+                    except Exception as e:
+                        logging.error(f"Failed to fetch manifest for {version_info.get('version')}: {e}")
+
+            # Schedule the UI update on the main thread
+            self.after(0, self._update_releases_ui, full_release_data)
+
+        except Exception as e:
+            logging.error(f"Failed to fetch versions.json: {e}", exc_info=True)
+            self._log_status(f"ERROR: Failed to fetch release index: {e}")
+        finally:
+            # Re-enable the refresh button
+            self.after(0, self.refresh_releases_button.configure, {"state": "normal"})
+
+    def _fetch_manifest(self, url: str) -> dict:
+        """Fetches and parses a single manifest file from a URL."""
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        return response.json()
+
+    def _update_releases_ui(self, release_data: List[dict]):
+        """Clears and rebuilds the releases UI from fetched data into a table format."""
+        # Clear existing widgets
+        for widget_info in self.release_widgets:
+            # Unpack all widgets in the row and destroy them
+            for widget in widget_info.values():
+                if isinstance(widget, ctk.CTkBaseClass):
+                    widget.destroy()
+        self.release_widgets.clear()
+
+        if not release_data:
+            # Check if a 'no releases' label already exists
+            if not hasattr(self, '_no_releases_label') or not self._no_releases_label.winfo_exists():
+                self._no_releases_label = ctk.CTkLabel(self.releases_scroll_frame, text="No releases found.")
+                self._no_releases_label.pack(pady=10)
+            return
+        elif hasattr(self, '_no_releases_label') and self._no_releases_label.winfo_exists():
+            self._no_releases_label.destroy()
+
+        # Configure grid columns for the table
+        self.releases_scroll_frame.grid_columnconfigure(0, weight=0)  # Checkbox
+        self.releases_scroll_frame.grid_columnconfigure(1, weight=1)  # Version
+        self.releases_scroll_frame.grid_columnconfigure(2, weight=2)  # Upload Date
+        self.releases_scroll_frame.grid_columnconfigure(3, weight=1)  # SHA
+
+        # Create Header
+        header_font = ctk.CTkFont(weight="bold")
+        headers = ["Latest", "Version", "Upload Date", "SHA256"]
+        for col, header_text in enumerate(headers):
+            header = ctk.CTkLabel(self.releases_scroll_frame, text=header_text, font=header_font)
+            header.grid(row=0, column=col, padx=10, pady=5, sticky="w")
+
+        # Create Table Rows
+        for i, data in enumerate(release_data):
+            row_index = i + 1  # Start after header row
+            
+            version = data.get("version", "N/A")
+            upload_date = data.get("upload_date", "N/A")
+            sha = data.get("zip_sha256", "N/A")[:12] + "..."
+            is_latest = data.get("latest", False)
+
+            # Latest Checkbox
+            latest_var = ctk.BooleanVar(value=is_latest)
+            checkbox = ctk.CTkCheckBox(
+                self.releases_scroll_frame,
+                text="",
+                variable=latest_var,
+                command=lambda i=i: self._on_latest_checkbox_change(i),
+                fg_color=FLY_AGARIC_RED
+            )
+            checkbox.grid(row=row_index, column=0, padx=10, pady=5)
+
+            # Version Label
+            version_label = ctk.CTkLabel(self.releases_scroll_frame, text=version)
+            version_label.grid(row=row_index, column=1, padx=10, pady=5, sticky="w")
+
+            # Upload Date Label
+            date_label = ctk.CTkLabel(self.releases_scroll_frame, text=upload_date)
+            date_label.grid(row=row_index, column=2, padx=10, pady=5, sticky="w")
+            
+            # SHA Label
+            sha_label = ctk.CTkLabel(self.releases_scroll_frame, text=sha)
+            sha_label.grid(row=row_index, column=3, padx=10, pady=5, sticky="w")
+
+            self.release_widgets.append({
+                "checkbox": checkbox,
+                "version_label": version_label,
+                "date_label": date_label,
+                "sha_label": sha_label,
+                "data": data,
+                "latest_var": latest_var,
+                "index": i
+            })
+        self._log_status("Release information updated.")
+    
+    def _on_latest_checkbox_change(self, selected_index: int):
+        """Ensures only one checkbox can be selected as 'latest'."""
+        for i, widget_info in enumerate(self.release_widgets):
+            if i != selected_index:
+                widget_info['latest_var'].set(False)
+        self.save_changes_button.configure(state="normal")
+    
+    def _save_release_changes(self):
+        """Saves the changes made in the 'Manage Releases' tab."""
+        self._log_status("Saving changes to versions.json...")
+        
+        updated_versions = []
+        for widget_info in self.release_widgets:
+            version_data = widget_info['data']
+            is_latest = widget_info['latest_var'].get()
+            
+            # Build the entry for versions.json from the original data
+            entry = {
+                "version": version_data.get("version"),
+                "release_notes": version_data.get("release_notes"),
+                "manifest_urls": version_data.get("manifest_urls"),
+                "download_urls": version_data.get("download_urls"),
+            }
+            if is_latest:
+                entry["latest"] = True
+            
+            updated_versions.append(entry)
+
+        try:
+            # Using the new generic save method
+            self.index_provider.save_index_content(updated_versions)
+            self._log_status("Successfully saved changes to versions.json!")
+            self.save_changes_button.configure(state="disabled")
+        except Exception as e:
+            logging.error(f"Failed to save versions.json: {e}", exc_info=True)
+            self._log_status(f"ERROR: Failed to save changes: {e}")
