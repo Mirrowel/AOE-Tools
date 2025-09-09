@@ -35,12 +35,15 @@ class App(ctk.CTkToplevel):
         self.progress_value = 0.0
         self.last_status_message = ""
 
-        self._configure_providers()
-        self._create_widgets()
-
         self.file_paths: List[str] = []
         self.feedback_queue = queue.Queue()
+
+        self._configure_providers()
+        self._create_widgets()
         self._process_feedback_queue()
+
+        # Load initial values from settings now that UI is ready
+        self._load_settings_from_env()
 
     def _configure_providers(self):
         """Instantiates all configured providers."""
@@ -59,14 +62,14 @@ class App(ctk.CTkToplevel):
                     repo_slug=settings.GITHUB_ASSET_REPO,
                 )
             )
-        if settings.CATBOX_USER_HASH:
-            self.asset_providers.append(CatboxProvider(user_hash=settings.CATBOX_USER_HASH))
+        # Catbox is always available, user_hash can be None
+        self.asset_providers.append(CatboxProvider(user_hash=settings.CATBOX_USER_HASH))
 
     def _create_widgets(self):
         """Creates and lays out all the GUI widgets with tab-based interface."""
         # Main tabview container
         self.tabview = ctk.CTkTabview(self, width=850, height=700)
-        self.tabview.pack(pady=20, padx=20, fill="both", expand=True)
+        self.tabview.pack(pady=10, padx=10, fill="both", expand=True)
 
         # Create tabs
         self.tabview.add("Upload")
@@ -235,61 +238,307 @@ class App(ctk.CTkToplevel):
         """Creates the settings tab with configuration options."""
         settings_tab = self.tabview.tab("Settings")
 
-        # Account Settings
-        account_frame = ctk.CTkFrame(settings_tab, fg_color=FLY_AGARIC_BLACK,
-                                   border_color=FLY_AGARIC_RED, border_width=2)
-        account_frame.pack(pady=10, padx=10, fill="x")
+        # Create a scrollable frame to contain all settings widgets
+        scrollable_frame = ctk.CTkScrollableFrame(settings_tab, fg_color="transparent")
+        scrollable_frame.pack(fill="both", expand=True, padx=5, pady=5)
 
-        ctk.CTkLabel(account_frame, text="🎫 Account Settings",
+
+        # Initialize GUI settings widgets
+        self.settings_widgets = {}
+
+        # Index Configuration Section
+        index_frame = ctk.CTkFrame(scrollable_frame, fg_color=FLY_AGARIC_BLACK,
+                                  border_color=FLY_AGARIC_RED, border_width=2)
+        index_frame.pack(pady=10, padx=10, fill="x")
+
+        ctk.CTkLabel(index_frame, text="📁 Index Repository Configuration",
                     font=ctk.CTkFont(size=14, weight="bold")).pack(pady=5, padx=10, anchor="w")
 
-        ctk.CTkLabel(account_frame, text="GitHub Token:").pack(pady=5, padx=10, anchor="w")
-        github_token_entry = ctk.CTkEntry(
-            account_frame,
+        # Clone URL
+        ctk.CTkLabel(index_frame, text="Git Clone URL:").pack(pady=2, padx=10, anchor="w")
+        self.settings_widgets['index_git_clone_url'] = ctk.CTkEntry(
+            index_frame,
+            fg_color=FLY_AGARIC_WHITE,
+            text_color=FLY_AGARIC_BLACK,
+            placeholder_text="https://github.com/YourUser/AOEngine-Manifest.git"
+        )
+        self.settings_widgets['index_git_clone_url'].pack(pady=2, padx=10, fill="x")
+
+        # Branch
+        ctk.CTkLabel(index_frame, text="Branch:").pack(pady=2, padx=10, anchor="w")
+        self.settings_widgets['index_git_branch'] = ctk.CTkEntry(
+            index_frame,
+            fg_color=FLY_AGARIC_WHITE,
+            text_color=FLY_AGARIC_BLACK,
+            placeholder_text="main"
+        )
+        self.settings_widgets['index_git_branch'].pack(pady=2, padx=10, fill="x")
+
+        # Local Folder
+        ctk.CTkLabel(index_frame, text="Local Folder Name:").pack(pady=2, padx=10, anchor="w")
+        self.settings_widgets['index_git_local_folder'] = ctk.CTkEntry(
+            index_frame,
+            fg_color=FLY_AGARIC_WHITE,
+            text_color=FLY_AGARIC_BLACK,
+            placeholder_text="_index_repo_data"
+        )
+        self.settings_widgets['index_git_local_folder'].pack(pady=2, padx=10, fill="x")
+
+        # Token Settings Section
+        tokens_frame = ctk.CTkFrame(scrollable_frame, fg_color=FLY_AGARIC_BLACK,
+                                   border_color=FLY_AGARIC_RED, border_width=2)
+        tokens_frame.pack(pady=10, padx=10, fill="x")
+
+        ctk.CTkLabel(tokens_frame, text="🔐 Authentication Tokens",
+                    font=ctk.CTkFont(size=14, weight="bold")).pack(pady=5, padx=10, anchor="w")
+
+        # Single Token Checkbox and Field
+        self.use_single_token_var = ctk.BooleanVar(value=True)
+        single_token_cb = ctk.CTkCheckBox(
+            tokens_frame,
+            text="Use single token for both Index and Assets",
+            variable=self.use_single_token_var,
+            command=self._toggle_token_fields,
+            fg_color=FLY_AGARIC_RED,
+            hover_color=FLY_AGARIC_WHITE
+        )
+        single_token_cb.pack(pady=5, padx=10, anchor="w")
+
+        ctk.CTkLabel(tokens_frame, text="GitHub Token:").pack(pady=2, padx=10, anchor="w")
+        self.settings_widgets['github_token_single'] = ctk.CTkEntry(
+            tokens_frame,
             show="*",
             fg_color=FLY_AGARIC_WHITE,
             text_color=FLY_AGARIC_BLACK,
-            placeholder_text="(configured in config.py)"
+            placeholder_text="ghp_YourGitHubToken"
         )
-        github_token_entry.pack(pady=5, padx=10, fill="x")
-        github_token_entry.configure(state="disabled")
+        self.settings_widgets['github_token_single'].pack(pady=2, padx=10, fill="x")
 
-        ctk.CTkLabel(account_frame, text="Catbox Hash:").pack(pady=5, padx=10, anchor="w")
-        catbox_entry = ctk.CTkEntry(
-            account_frame,
+        # Index Token (separate field)
+        self.index_token_label = ctk.CTkLabel(tokens_frame, text="Index Repository Token:")
+        self.settings_widgets['github_token_for_index'] = ctk.CTkEntry(
+            tokens_frame,
             show="*",
             fg_color=FLY_AGARIC_WHITE,
             text_color=FLY_AGARIC_BLACK,
-            placeholder_text="(configured in config.py)"
+            placeholder_text="ghp_IndexRepoToken"
         )
-        catbox_entry.pack(pady=5, padx=10, fill="x")
-        catbox_entry.configure(state="disabled")
 
-        # Provider Settings
-        provider_frame = ctk.CTkFrame(settings_tab, fg_color=FLY_AGARIC_BLACK,
-                                    border_color=FLY_AGARIC_RED, border_width=2)
+        # Assets Token (separate field)
+        self.assets_token_label = ctk.CTkLabel(tokens_frame, text="Assets Repository Token:")
+        self.settings_widgets['github_token_for_assets'] = ctk.CTkEntry(
+            tokens_frame,
+            show="*",
+            fg_color=FLY_AGARIC_WHITE,
+            text_color=FLY_AGARIC_BLACK,
+            placeholder_text="ghp_AssetRepoToken"
+        )
+        
+        # Provider Settings Section
+        provider_frame = ctk.CTkFrame(scrollable_frame, fg_color=FLY_AGARIC_BLACK,
+                                     border_color=FLY_AGARIC_RED, border_width=2)
         provider_frame.pack(pady=10, padx=10, fill="x")
 
-        ctk.CTkLabel(provider_frame, text="🔗 Provider Settings",
+        ctk.CTkLabel(provider_frame, text="🗂️ Asset Provider Settings",
                     font=ctk.CTkFont(size=14, weight="bold")).pack(pady=5, padx=10, anchor="w")
 
-        ctk.CTkLabel(provider_frame, text="GitHub Repository:").pack(pady=5, padx=10, anchor="w")
-        repo_entry = ctk.CTkEntry(
+        ctk.CTkLabel(provider_frame, text="GitHub Assets Repository:").pack(pady=2, padx=10, anchor="w")
+        self.settings_widgets['github_asset_repo'] = ctk.CTkEntry(
             provider_frame,
             fg_color=FLY_AGARIC_WHITE,
             text_color=FLY_AGARIC_BLACK,
-            placeholder_text=settings.GITHUB_ASSET_REPO or "user/repo"
+            placeholder_text="user/assets-repo"
         )
-        repo_entry.pack(pady=5, padx=10, fill="x")
+        self.settings_widgets['github_asset_repo'].pack(pady=2, padx=10, fill="x")
 
-        ctk.CTkLabel(provider_frame, text="Branch:").pack(pady=5, padx=10, anchor="w")
-        branch_entry = ctk.CTkEntry(
-            provider_frame,
+        # Catbox Settings Section
+        catbox_frame = ctk.CTkFrame(scrollable_frame, fg_color=FLY_AGARIC_BLACK,
+                                   border_color=FLY_AGARIC_RED, border_width=2)
+        catbox_frame.pack(pady=10, padx=10, fill="x")
+
+        ctk.CTkLabel(catbox_frame, text="📦 Catbox Configuration",
+                    font=ctk.CTkFont(size=14, weight="bold")).pack(pady=5, padx=10, anchor="w")
+
+        # Anonymous upload checkbox
+        self.catbox_anonymous_var = ctk.BooleanVar()
+        catbox_anon_cb = ctk.CTkCheckBox(
+            catbox_frame,
+            text="Use anonymous uploads (no user hash required)",
+            variable=self.catbox_anonymous_var,
+            command=self._toggle_catbox_fields,
+            fg_color=FLY_AGARIC_RED,
+            hover_color=FLY_AGARIC_WHITE
+        )
+        catbox_anon_cb.pack(pady=5, padx=10, anchor="w")
+
+        self.catbox_hash_label = ctk.CTkLabel(catbox_frame, text="User Hash (optional):")
+        self.catbox_hash_label.pack(pady=2, padx=10, anchor="w")
+        self.settings_widgets['catbox_user_hash'] = ctk.CTkEntry(
+            catbox_frame,
+            show="*",
             fg_color=FLY_AGARIC_WHITE,
             text_color=FLY_AGARIC_BLACK,
-            placeholder_text=settings.INDEX_GIT_BRANCH or "main"
+            placeholder_text="Leave empty for anonymous uploads"
         )
-        branch_entry.pack(pady=5, padx=10, fill="x")
+        self.settings_widgets['catbox_user_hash'].pack(pady=2, padx=10, fill="x")
+
+        # Action Buttons
+        button_frame = ctk.CTkFrame(scrollable_frame, fg_color="transparent")
+        button_frame.pack(pady=10, padx=10, fill="x")
+        self.save_settings_button = ctk.CTkButton(
+            button_frame,
+            text="💾 Save Settings",
+            command=self._save_settings,
+            fg_color=FLY_AGARIC_RED,
+            hover_color=FLY_AGARIC_WHITE,
+            text_color=FLY_AGARIC_WHITE
+        )
+        self.save_settings_button.pack(side="right", padx=5)
+
+        self.load_settings_button = ctk.CTkButton(
+            button_frame,
+            text="🔄 Reload Settings",
+            command=self._load_settings_from_env,
+            fg_color=FLY_AGARIC_BLACK,
+            hover_color=FLY_AGARIC_RED,
+            border_color=FLY_AGARIC_RED,
+            border_width=2
+        )
+        self.load_settings_button.pack(side="right", padx=5)
+
+
+    def _toggle_token_fields(self):
+        """Show/hide separate token fields based on checkbox."""
+        use_single = self.use_single_token_var.get()
+        
+        # Single token field
+        single_token_widget = self.settings_widgets['github_token_single']
+        
+        # Separate token fields
+        index_label = self.index_token_label
+        index_widget = self.settings_widgets['github_token_for_index']
+        assets_label = self.assets_token_label
+        assets_widget = self.settings_widgets['github_token_for_assets']
+
+        if use_single:
+            if not single_token_widget.winfo_ismapped():
+                single_token_widget.pack(pady=2, padx=10, fill="x")
+            
+            index_label.pack_forget()
+            index_widget.pack_forget()
+            assets_label.pack_forget()
+            assets_widget.pack_forget()
+        else:
+            single_token_widget.pack_forget()
+
+            if not index_label.winfo_ismapped():
+                index_label.pack(pady=2, padx=10, anchor="w")
+                index_widget.pack(pady=2, padx=10, fill="x")
+                assets_label.pack(pady=2, padx=10, anchor="w")
+                assets_widget.pack(pady=2, padx=10, fill="x")
+
+    def _toggle_catbox_fields(self):
+        """Enable/disable catbox hash field based on anonymous checkbox."""
+        is_anonymous = self.catbox_anonymous_var.get()
+        hash_widget = self.settings_widgets['catbox_user_hash']
+        
+        current_val = hash_widget.get()
+
+        if is_anonymous:
+            hash_widget.configure(state="disabled")
+            # If the field is empty, show the placeholder. Otherwise, keep the value.
+            if not current_val:
+                hash_widget.configure(placeholder_text="Anonymous upload")
+        else:
+            hash_widget.configure(state="normal", placeholder_text="Enter your user hash")
+
+    def _save_settings(self):
+        """Save current GUI settings to .env file."""
+        try:
+            # --- Save field values ---
+            # Get token values non-destructively
+            use_single_token = self.use_single_token_var.get()
+            if use_single_token:
+                token = self._get_entry_text('github_token_single')
+                github_token_for_index = token
+                github_token_for_assets = token
+            else:
+                github_token_for_index = self._get_entry_text('github_token_for_index')
+                github_token_for_assets = self._get_entry_text('github_token_for_assets')
+
+            # Get catbox hash, respecting anonymous toggle for the final value
+            catbox_widget = self.settings_widgets.get('catbox_user_hash')
+            catbox_hash_to_save = catbox_widget.get().strip() if catbox_widget else ""
+
+            # Do not save placeholder text, and ensure anonymous saves an empty string
+            if self.catbox_anonymous_var.get() or \
+               (catbox_widget and catbox_hash_to_save == catbox_widget.cget("placeholder_text")):
+                catbox_hash_to_save = ""
+
+            settings.save_settings(
+                # Core settings
+                index_git_clone_url=self._get_entry_text('index_git_clone_url'),
+                index_git_branch=self._get_entry_text('index_git_branch'),
+                index_git_local_folder=self._get_entry_text('index_git_local_folder'),
+                github_token_for_index=github_token_for_index,
+                github_asset_repo=self._get_entry_text('github_asset_repo'),
+                github_token_for_assets=github_token_for_assets,
+                catbox_user_hash=catbox_hash_to_save,
+                
+                # UI state settings
+                ui_use_single_token=self.use_single_token_var.get(),
+                ui_catbox_anonymous=self.catbox_anonymous_var.get()
+            )
+            # Re-configure providers with new settings
+            self._configure_providers()
+            self._log_status("Settings saved successfully!")
+        except Exception as e:
+            logging.error(f"Failed to save settings: {e}", exc_info=True)
+            self._log_status(f"ERROR: Failed to save settings: {e}")
+
+    def _load_settings_from_env(self):
+        """Load current settings into GUI fields."""
+        # --- Index Repo ---
+        self._set_entry_text('index_git_clone_url', settings.INDEX_GIT_CLONE_URL)
+        self._set_entry_text('index_git_branch', settings.INDEX_GIT_BRANCH)
+        self._set_entry_text('index_git_local_folder', settings.INDEX_GIT_LOCAL_FOLDER)
+        
+        # --- Tokens ---
+        self._set_entry_text('github_token_for_index', settings.GITHUB_TOKEN_FOR_INDEX)
+        self._set_entry_text('github_token_for_assets', settings.GITHUB_TOKEN_FOR_ASSETS)
+        self._set_entry_text('github_token_single', settings.GITHUB_TOKEN_FOR_INDEX) # Default to index token
+        
+        # --- Asset Repo ---
+        self._set_entry_text('github_asset_repo', settings.GITHUB_ASSET_REPO)
+        
+        # --- Catbox ---
+        catbox_widget = self.settings_widgets.get('catbox_user_hash')
+        if catbox_widget:
+            catbox_widget.delete(0, 'end')
+            if settings.CATBOX_USER_HASH: # Only insert if it's not None or empty
+                catbox_widget.insert(0, settings.CATBOX_USER_HASH)
+        
+        # --- UI State ---
+        self.use_single_token_var.set(settings.UI_USE_SINGLE_TOKEN)
+        self.catbox_anonymous_var.set(settings.UI_CATBOX_ANONYMOUS)
+
+        # Update UI visibility based on loaded state
+        self._toggle_token_fields()
+        self._toggle_catbox_fields()
+        self._log_status("Settings loaded from .env file!")
+
+
+    def _get_entry_text(self, widget_key):
+        """Get text from a settings entry widget, return empty string if empty."""
+        widget = self.settings_widgets.get(widget_key)
+        return widget.get().strip() if widget else ""
+
+    def _set_entry_text(self, widget_key, text):
+        """Set text for a settings entry widget."""
+        widget = self.settings_widgets.get(widget_key)
+        if widget and text is not None:
+            widget.delete(0, 'end')
+            widget.insert(0, text)
 
     def _browse_files(self):
         """Opens a dialog to select files and updates the list."""
@@ -376,8 +625,6 @@ class App(ctk.CTkToplevel):
 
         # File manipulation buttons
         try:
-            browse_btn_state = state
-            clear_btn_state = state if self.file_paths else "disabled"
             # These buttons are embedded in the tab structure, so we need to find them
             self._find_and_toggle_file_buttons(state)
         except Exception as e:
@@ -390,7 +637,7 @@ class App(ctk.CTkToplevel):
         # Recursively search for buttons in the upload tab
         def toggle_buttons_in_frame(frame, new_state):
             for child in frame.winfo_children():
-                if isinstance(child, ctk.CTkButton) and "Files" in child.cget("text"):
+                if isinstance(child, ctk.CTkButton) and ("Browse" in child.cget("text") or "Clear" in child.cget("text")):
                     child.configure(state=new_state)
                 elif isinstance(child, ctk.CTkFrame):
                     toggle_buttons_in_frame(child, new_state)
@@ -474,4 +721,3 @@ class App(ctk.CTkToplevel):
         finally:
             # Schedule the UI update to run in the main thread
             self.after(0, self._toggle_ui_elements, True)
-
