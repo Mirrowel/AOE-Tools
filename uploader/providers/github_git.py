@@ -2,8 +2,31 @@ import os
 import json
 import shutil
 import git
-from uploader.providers.base import IndexProvider
+import time
 import logging
+from functools import wraps
+from uploader.providers.base import IndexProvider
+
+def git_retry(max_retries=3, delay=2.0):
+    """Decorator that retries a function call in case of GitCommandError or GithubException."""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            last_exception = None
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except (git.GitCommandError, Exception) as e:
+                    last_exception = e
+                    if attempt < max_retries - 1:
+                        logging.warning(f"Git operation failed (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {delay} seconds...")
+                        time.sleep(delay)
+                    else:
+                        logging.error(f"Git operation failed after {max_retries} attempts: {e}")
+                        raise last_exception
+            raise last_exception
+        return wrapper
+    return decorator
 
 class GitHubGitProvider(IndexProvider):
     def __init__(self, clone_url: str, branch: str, local_folder: str, token: str):
@@ -51,6 +74,7 @@ class GitHubGitProvider(IndexProvider):
         with open(index_path, 'r') as f:
             return json.load(f)
 
+    @git_retry()
     def update_index_content(self, new_content: list):
         # Assuming the latest version is the first in the list
         version = new_content[0].get("version", "unknown") if new_content else "unknown"
@@ -63,6 +87,7 @@ class GitHubGitProvider(IndexProvider):
         self.repo.index.commit(commit_message)
         self.repo.remotes.origin.push()
 
+    @git_retry()
     def commit_manifest_file(self, file_path: str, version: str) -> str:
         """Commits a manifest file to a 'manifests' directory and returns its URL."""
         manifests_dir = os.path.abspath(os.path.join(self.local_folder, 'manifests'))
@@ -96,6 +121,7 @@ class GitHubGitProvider(IndexProvider):
         self.repo.index.commit(commit_message)
         self.repo.remotes.origin.push()
 
+    @git_retry()
     def save_all_changes(self, versions_content: list, manifests_to_update: dict):
         """Saves versions.json and any modified manifests in a single commit."""
         self.repo.remotes.origin.pull()
