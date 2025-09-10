@@ -3,6 +3,7 @@ import threading
 from tkinter import filedialog, messagebox
 import queue
 import json
+import logging
 from pathlib import Path
 from typing import Callable
 
@@ -10,6 +11,7 @@ from launcher.core.config import ConfigManager
 from launcher.core.network import NetworkManager
 from launcher.core.backup import BackupManager
 from launcher.core.models import ReleaseInfo
+from launcher.utils.logging import log_queue
 
 # Custom colors for fly agaric theme
 FLY_AGARIC_RED = "#A52A2A"
@@ -54,6 +56,7 @@ class App(ctk.CTk):
         # --- Threading and Queue for UI updates ---
         self.gui_queue = queue.Queue()
         self.after(100, self._process_gui_queue)
+        self.after(100, self._process_log_queue)
 
         # --- Initial State ---
         self.releases: list[ReleaseInfo] = []
@@ -62,6 +65,8 @@ class App(ctk.CTk):
 
         # Start update check in a separate thread
         threading.Thread(target=self._check_for_updates, daemon=True).start()
+
+        self.console_window = None
 
     def _prompt_for_game_path(self):
         """Prompts the user to select the game directory."""
@@ -89,6 +94,18 @@ class App(ctk.CTk):
             # More frequent processing for better responsiveness
             self.after(10, self._process_gui_queue)
 
+    def _process_log_queue(self):
+        """Processes messages from the logging queue to update the console."""
+        try:
+            while not log_queue.empty():
+                message = log_queue.get_nowait()
+                if self.console_window and self.console_window.winfo_exists():
+                    self.console_window.log(message)
+        except queue.Empty:
+            pass
+        finally:
+            self.after(100, self._process_log_queue)
+
     def _queue_ui_update(self, callback, *args, **kwargs):
         """A thread-safe way to queue a GUI update."""
         self.gui_queue.put((callback, args, kwargs))
@@ -97,9 +114,11 @@ class App(ctk.CTk):
     def _check_for_updates(self):
         """(Worker Thread) Fetches release info and updates the GUI via queue."""
         try:
+            logging.info("Fetching release information...")
             self._queue_ui_update(self.status_label.configure, text="Fetching release information...")
             self.releases = self.network_manager.fetch_all_release_info()
             if not self.releases:
+                logging.warning("Could not fetch releases.")
                 self._queue_ui_update(self.status_label.configure, text="Could not fetch releases.")
                 return
 
@@ -124,6 +143,7 @@ class App(ctk.CTk):
             self._queue_ui_update(self.release_notes_textbox.configure, state="disabled")
 
         except Exception as e:
+            logging.error(f"Error checking for updates: {e}", exc_info=True)
             self._queue_ui_update(self.status_label.configure, text=f"Error: {e}")
 
     def _refresh_installed_version(self):
@@ -163,11 +183,13 @@ class App(ctk.CTk):
             target_release = next((r for r in self.releases if r.version == selected_version_str), None)
 
             if not target_release:
+                logging.error(f"Selected version {selected_version_str} not found in releases.")
                 self._queue_ui_update(self.status_label.configure, text="Selected version not found.")
                 return
 
             game_path_str = self.config_manager.get_config().game_path
             if not game_path_str:
+                 logging.error("Game path not configured.")
                  self._queue_ui_update(self.status_label.configure, text="Game path not configured.")
                  return
             game_path = Path(game_path_str)
@@ -177,17 +199,20 @@ class App(ctk.CTk):
                 self._queue_ui_update(self.progress_bar.set, progress_fraction)
 
             # 1. Backup
+            logging.info("Backing up 'bin' directory...")
             self._queue_ui_update(self.status_label.configure, text="Backing up 'bin' directory...")
             self._queue_ui_update(self.progress_bar.set, 0)
             backup_version = self.installed_version if self.installed_version != "None" else "initial"
             self.backup_manager.create_backup(version=backup_version, progress_callback=progress_callback)
+            logging.info("Backup complete.")
 
             # 2. Download
+            logging.info(f"Downloading {target_release.version}...")
             self._queue_ui_update(self.status_label.configure, text=f"Downloading {target_release.version}...")
             self._queue_ui_update(self.progress_bar.set, 0)
             
             def status_update_callback(message):
-                self._queue_ui_update(self.status_label.configure, text=message)
+                logging.info(message)
 
             download_path = self.network_manager.download_file_with_fallback(
                 target_release.download_urls,
@@ -196,21 +221,29 @@ class App(ctk.CTk):
             )
 
             if not download_path:
+                logging.error("Download failed from all sources.")
                 self._queue_ui_update(self.status_label.configure, text="Download failed from all sources.")
                 return
+            
+            logging.info(f"Download successful. File saved to: {download_path}")
 
             # 3. Verify
+            logging.info("Verifying file integrity...")
             self._queue_ui_update(self.status_label.configure, text="Verifying file integrity...")
             verified = self.network_manager.verify_sha256(download_path, target_release.zip_sha256)
             if not verified:
+                logging.error("Hash mismatch! Download may be corrupt.")
                 self._queue_ui_update(self.status_label.configure, text="Hash mismatch! Download may be corrupt.")
                 return
+            logging.info("File verification successful.")
             self._queue_ui_update(self.progress_bar.set, 1) # File verification complete
 
             # 4. Extract
+            logging.info(f"Extracting files to {bin_path}...")
             self._queue_ui_update(self.status_label.configure, text="Extracting files...")
             self._queue_ui_update(self.progress_bar.set, 0)
             self.network_manager.extract_zip(download_path, str(bin_path), progress_callback=progress_callback)
+            logging.info("Extraction complete.")
 
             # 5. Create version.json
             version_file_path = bin_path / "version.json"
@@ -218,13 +251,16 @@ class App(ctk.CTk):
             manifest_url = target_release.manifest_urls.get("GitHub Git", list(target_release.manifest_urls.values())[0])
             with open(version_file_path, "w") as f:
                 json.dump({"version": target_release.version, "manifest_url": manifest_url}, f, indent=4)
+            logging.info(f"Created version.json for version {target_release.version}")
 
             self._queue_ui_update(self.status_label.configure, text="Installation complete!")
             self._queue_ui_update(self.progress_bar.set, 1)
             self.installed_version = target_release.version
             self._queue_ui_update(self.version_label.configure, text=f"Installed: {self.installed_version} | Latest: {self.latest_release.version}")
+            logging.info("Installation complete!")
 
         except Exception as e:
+            logging.error(f"Installation failed: {e}", exc_info=True)
             self._queue_ui_update(self.status_label.configure, text=f"Installation failed: {e}")
         finally:
             self._queue_ui_update(self.action_button.configure, state="normal")
@@ -296,6 +332,20 @@ class App(ctk.CTk):
                                            hover_color=FLY_AGARIC_WHITE,
                                            text_color=FLY_AGARIC_WHITE)
         self.backup_button.grid(row=5, column=0, pady=10, padx=10, sticky="ew")
+
+        # --- Console Window ---
+        self.console_button = ctk.CTkButton(main_frame, text="Console",
+                                           command=self._open_console_window,
+                                           fg_color=FLY_AGARIC_RED,
+                                           hover_color=FLY_AGARIC_WHITE,
+                                           text_color=FLY_AGARIC_WHITE)
+        self.console_button.grid(row=6, column=0, pady=10, padx=10, sticky="ew")
+
+    def _open_console_window(self):
+        if self.console_window is None or not self.console_window.winfo_exists():
+            self.console_window = ConsoleWindow(self)
+        else:
+            self.console_window.focus()
 
     def _open_backup_window(self):
         backup_window = BackupWindow(self, self.backup_manager)
@@ -443,3 +493,29 @@ class BackupWindow(ctk.CTkToplevel):
                         for button in sub_widget.winfo_children():
                             if isinstance(button, ctk.CTkButton):
                                 button.configure(state=state)
+
+
+class ConsoleWindow(ctk.CTkToplevel):
+    def __init__(self, master):
+        super().__init__(master)
+        self.title("Console Log")
+        self.geometry("800x400")
+
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(0, weight=1)
+
+        self.log_textbox = ctk.CTkTextbox(self, wrap="word",
+                                          fg_color=FLY_AGARIC_BLACK,
+                                          text_color=FLY_AGARIC_WHITE,
+                                          border_color=FLY_AGARIC_RED,
+                                          border_width=2,
+                                          font=("Courier New", 12))
+        self.log_textbox.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+        self.log_textbox.configure(state="disabled")
+
+    def log(self, message: str):
+        """Appends a message to the log display."""
+        self.log_textbox.configure(state="normal")
+        self.log_textbox.insert("end", message + "\n")
+        self.log_textbox.see("end") # Scroll to the end
+        self.log_textbox.configure(state="disabled")

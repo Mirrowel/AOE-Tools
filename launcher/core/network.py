@@ -4,6 +4,7 @@ import zipfile
 import requests
 import os
 import concurrent.futures
+import logging
 from typing import List, Dict, Optional, Callable
 
 from launcher.core.models import Version, Manifest, ReleaseInfo
@@ -19,12 +20,14 @@ class NetworkManager:
         Fetches the versions.json file and returns a list of Version objects.
         """
         try:
+            logging.info(f"Fetching versions from {self.VERSIONS_URL}")
             response = requests.get(self.VERSIONS_URL)
             response.raise_for_status()
             versions_data = response.json()
+            logging.info("Successfully fetched and parsed versions.json")
             return [Version(**item) for item in versions_data]
         except requests.RequestException as e:
-            print(f"Error fetching versions file: {e}")
+            logging.error(f"Error fetching versions file: {e}")
             return []
 
     def find_latest_version(self, versions: List[Version]) -> Optional[Version]:
@@ -59,7 +62,7 @@ class NetworkManager:
 
         for provider, url in urls.items():
             try:
-                print(f"Attempting to download from {provider} ({url})...")
+                logging.info(f"Attempting to download from {provider} ({url})...")
                 if status_callback:
                     status_callback(f"Trying {provider}...")
                 with requests.get(url, stream=True, timeout=10) as response:
@@ -80,29 +83,38 @@ class NetworkManager:
                         # Send final 100% update
                         if progress_callback and total_size > 0:
                             progress_callback(1.0)
-                print("Download successful.")
+                logging.info("Download successful.")
                 return destination
             except requests.RequestException as e:
-                print(f"Failed to download from {url}: {e}")
+                logging.error(f"Failed to download from {url}: {e}")
                 if status_callback:
                     status_callback(f"{provider} failed. Trying next mirror...")
                 continue
         
         os.remove(destination)
-        print("All download URLs failed.")
+        logging.error("All download URLs failed.")
         return None
 
     def verify_sha256(self, file_path: str, expected_hash: str) -> bool:
         """
         Verifies the SHA256 hash of a file.
         """
+        logging.info(f"Verifying SHA256 hash for {file_path}")
         sha256_hash = hashlib.sha256()
         try:
             with open(file_path, "rb") as f:
                 for byte_block in iter(lambda: f.read(4096), b""):
                     sha256_hash.update(byte_block)
-            return sha256_hash.hexdigest() == expected_hash
+            
+            calculated_hash = sha256_hash.hexdigest()
+            is_valid = calculated_hash == expected_hash
+            if is_valid:
+                logging.info("SHA256 hash verification successful.")
+            else:
+                logging.error(f"SHA256 hash mismatch! Expected: {expected_hash}, Got: {calculated_hash}")
+            return is_valid
         except FileNotFoundError:
+            logging.error(f"File not found for hash verification: {file_path}")
             return False
 
     def extract_zip(self, zip_path: str, destination: str, progress_callback: Optional[Callable[[float], None]] = None):
@@ -129,24 +141,26 @@ class NetworkManager:
                 # Send final 100% update
                 if progress_callback:
                     progress_callback(1.0)
-            print(f"Successfully extracted {zip_path} to {destination}")
+            logging.info(f"Successfully extracted {zip_path} to {destination}")
         except zipfile.BadZipFile:
-            print(f"Error: The file {zip_path} is not a valid zip file or is corrupted.")
+            logging.error(f"Error: The file {zip_path} is not a valid zip file or is corrupted.")
         except IOError as e:
-            print(f"Error reading or writing file: {e}")
+            logging.error(f"Error reading or writing file: {e}")
 
     def fetch_manifest(self, version: Version) -> Optional[Manifest]:
         """
         Downloads and parses the manifest for a given version.
         """
+        logging.info(f"Fetching manifest for version {version.version}")
         downloaded_path = self.download_file_with_fallback(version.manifest_urls)
         if downloaded_path:
             try:
                 with open(downloaded_path, "r") as f:
                     manifest_data = f.read()
+                    logging.info(f"Successfully downloaded manifest for {version.version}")
                     return Manifest.model_validate_json(manifest_data)
             except Exception as e:
-                print(f"Error parsing manifest file: {e}")
+                logging.error(f"Error parsing manifest file: {e}")
                 return None
             finally:
                 os.remove(downloaded_path)
