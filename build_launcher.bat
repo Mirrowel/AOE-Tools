@@ -3,6 +3,7 @@ REM Build the launcher executable (Simplified)
 echo Building the launcher executable...
 python -m PyInstaller ^
 --onefile ^
+--noconsole ^
 --name launcher ^
 --paths "." ^
 --hidden-import=pydantic ^

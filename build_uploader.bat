@@ -3,6 +3,7 @@ REM Build the uploader executable (Simplified)
 echo Building the uploader executable...
 python -m PyInstaller ^
 --onefile ^
+--noconsole ^
 --name uploader ^
 --paths "." ^
 --hidden-import=pydantic ^
