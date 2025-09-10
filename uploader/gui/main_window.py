@@ -17,6 +17,7 @@ from ..providers.catbox import CatboxProvider
 from ..providers.github_git import GitHubGitProvider
 from ..providers.github_release import GitHubReleaseProvider
 from ..utils.logging import log_queue, log_history
+from shared.localization import init_translator, get_translator
 
 # Set up fly agaric theme
 ctk.set_appearance_mode("dark")
@@ -32,7 +33,7 @@ class NotesEditPopup(ctk.CTkToplevel):
     def __init__(self, master, current_notes, save_callback):
         super().__init__(master)
 
-        self.title("🍄 Edit Release Notes")
+        self.title(get_translator().get("edit_release_notes_title"))
         self.geometry("500x400")
         self.save_callback = save_callback
 
@@ -43,10 +44,10 @@ class NotesEditPopup(ctk.CTkToplevel):
         self.notes_textbox.grid(row=0, column=0, columnspan=2, padx=10, pady=10, sticky="nsew")
         self.notes_textbox.insert("1.0", current_notes)
 
-        self.save_button = ctk.CTkButton(self, text="Save", command=self._on_save)
+        self.save_button = ctk.CTkButton(self, text=get_translator().get("save_button"), command=self._on_save)
         self.save_button.grid(row=1, column=0, padx=10, pady=10, sticky="ew")
         
-        self.cancel_button = ctk.CTkButton(self, text="Cancel", command=self.destroy)
+        self.cancel_button = ctk.CTkButton(self, text=get_translator().get("cancel_button"), command=self.destroy)
         self.cancel_button.grid(row=1, column=1, padx=10, pady=10, sticky="ew")
         
         self.grab_set() # Make the popup modal
@@ -61,24 +62,28 @@ class App(ctk.CTkToplevel):
     def __init__(self, master=None):
         super().__init__(master)
 
-        self.title("🍄 AOEngine Uploader")
+        # --- Localization ---
+        self.translator = init_translator("uploader/locale", settings.UI_LANGUAGE)
+
+        self.title(self.translator.get("app_title"))
         self.geometry("900x800")
 
         # Graceful shutdown flag
         self.is_closing = False
         self.is_fetching_releases = False
         self.catbox_user_hash_value = "" # Persist hash during UI toggles
+        self.NOTES_PLACEHOLDER = self.translator.get("notes_placeholder")
 
         # Initialize progress tracking
         self.progress_value = 0.0
         self.last_status_message = ""
-        self.NOTES_PLACEHOLDER = "Add your release notes here..."
 
         self.file_paths: List[str] = []
         self.feedback_queue = queue.Queue()
 
         self._configure_providers()
         self._create_widgets()
+        self._update_ui_text() # Set initial text
         self._process_feedback_queue()
 
         # Load initial values from settings now that UI is ready
@@ -117,14 +122,14 @@ class App(ctk.CTkToplevel):
         self.tabview.pack(pady=10, padx=10, fill="both", expand=True)
 
         # Create tabs
-        self.tabview.add("Upload")
-        self.tabview.add("Manage Releases")
-        self.tabview.add("Settings")
+        self.tabview.add("upload")
+        self.tabview.add("manage_releases")
+        self.tabview.add("settings")
 
         # Apply custom styling to tabs
         self.tabview.configure(fg_color=FLY_AGARIC_BLACK,
-                             border_width=2,
-                             border_color=FLY_AGARIC_RED)
+                              border_width=2,
+                              border_color=FLY_AGARIC_RED)
 
         # Set up Upload tab
         self._create_upload_tab()
@@ -137,7 +142,7 @@ class App(ctk.CTkToplevel):
 
     def _create_upload_tab(self):
         """Creates the upload tab with all main functionality."""
-        upload_tab = self.tabview.tab("Upload")
+        upload_tab = self.tabview.tab("upload")
 
         # Create a scrollable frame to contain all upload widgets
         scrollable_frame = ctk.CTkScrollableFrame(upload_tab, fg_color="transparent")
@@ -147,8 +152,9 @@ class App(ctk.CTkToplevel):
         provider_frame = ctk.CTkFrame(scrollable_frame, fg_color=FLY_AGARIC_BLACK,
                                     border_color=FLY_AGARIC_RED, border_width=2)
         provider_frame.pack(pady=5, padx=10, fill="x")
-        ctk.CTkLabel(provider_frame, text="🍄 Asset Providers",
-                    font=ctk.CTkFont(size=14, weight="bold")).pack(pady=5, padx=10, anchor="w")
+        self.provider_frame_label = ctk.CTkLabel(provider_frame, text=self.translator.get("asset_providers_label"),
+                    font=ctk.CTkFont(size=14, weight="bold"))
+        self.provider_frame_label.pack(pady=5, padx=10, anchor="w")
 
         self.provider_checkboxes: Dict[ctk.CTkCheckBox, AssetProvider] = {}
         for provider in self.asset_providers:
@@ -171,8 +177,9 @@ class App(ctk.CTkToplevel):
         file_frame = ctk.CTkFrame(scrollable_frame, fg_color=FLY_AGARIC_BLACK,
                                 border_color=FLY_AGARIC_RED, border_width=2)
         file_frame.pack(pady=5, padx=10, fill="both", expand=True)
-        ctk.CTkLabel(file_frame, text="📁 Files to Upload",
-                    font=ctk.CTkFont(size=14, weight="bold")).pack(pady=5, padx=10, anchor="w")
+        self.files_to_upload_label = ctk.CTkLabel(file_frame, text=self.translator.get("files_to_upload_label"),
+                    font=ctk.CTkFont(size=14, weight="bold"))
+        self.files_to_upload_label.pack(pady=5, padx=10, anchor="w")
 
         self.file_list_textbox = ctk.CTkTextbox(
             file_frame,
@@ -192,17 +199,19 @@ class App(ctk.CTkToplevel):
 
         btn_frame = ctk.CTkFrame(file_frame, fg_color="transparent")
         btn_frame.pack(fill="x", padx=10, pady=5)
-        ctk.CTkButton(btn_frame, text="Browse Files",
+        self.browse_files_button = ctk.CTkButton(btn_frame, text=self.translator.get("browse_files_button"),
                      command=self._browse_files,
                      fg_color=FLY_AGARIC_RED,
                      hover_color=FLY_AGARIC_WHITE,
-                     text_color=FLY_AGARIC_WHITE).pack(side="left")
-        ctk.CTkButton(btn_frame, text="Clear",
+                     text_color=FLY_AGARIC_WHITE)
+        self.browse_files_button.pack(side="left")
+        self.clear_button = ctk.CTkButton(btn_frame, text=self.translator.get("clear_button"),
                      command=self._clear_files,
                      fg_color=FLY_AGARIC_BLACK,
                      hover_color=FLY_AGARIC_RED,
                      border_color=FLY_AGARIC_RED,
-                     border_width=2).pack(side="left", padx=10)
+                     border_width=2)
+        self.clear_button.pack(side="left", padx=10)
 
 
         # --- Metadata Input ---
@@ -210,14 +219,15 @@ class App(ctk.CTkToplevel):
                                     border_color=FLY_AGARIC_RED, border_width=2)
         metadata_frame.pack(pady=5, padx=10, fill="x")
 
-        ctk.CTkLabel(metadata_frame, text="📝 Release Version (e.g., 1.2.3)",
-                    font=ctk.CTkFont(size=14, weight="bold")).pack(pady=5, padx=10, anchor="w")
+        self.release_version_label = ctk.CTkLabel(metadata_frame, text=self.translator.get("release_version_label"),
+                    font=ctk.CTkFont(size=14, weight="bold"))
+        self.release_version_label.pack(pady=5, padx=10, anchor="w")
         self.version_entry = ctk.CTkEntry(
             metadata_frame,
             fg_color=FLY_AGARIC_WHITE,
             text_color=FLY_AGARIC_BLACK,
             border_color=FLY_AGARIC_RED,
-            placeholder_text="Enter version (e.g., 1.2.3)"
+            placeholder_text=self.translator.get("release_version_placeholder")
         )
         self.version_entry.pack(pady=5, padx=10, fill="x")
         self.version_entry.bind("<KeyRelease>", self._validate_inputs)
@@ -225,15 +235,17 @@ class App(ctk.CTkToplevel):
         release_notes_frame = ctk.CTkFrame(metadata_frame, fg_color="transparent")
         release_notes_frame.pack(fill="x", padx=10, pady=5)
         
-        ctk.CTkLabel(release_notes_frame, text="📝 Release Notes",
-                    font=ctk.CTkFont(size=14, weight="bold")).pack(side="left")
+        self.release_notes_label = ctk.CTkLabel(release_notes_frame, text=self.translator.get("release_notes_label"),
+                    font=ctk.CTkFont(size=14, weight="bold"))
+        self.release_notes_label.pack(side="left")
 
-        ctk.CTkButton(release_notes_frame, text="Edit in new window",
+        self.edit_in_new_window_button = ctk.CTkButton(release_notes_frame, text=self.translator.get("edit_in_new_window_button"),
                      command=self._open_upload_notes_popup,
                      fg_color=FLY_AGARIC_BLACK,
                      hover_color=FLY_AGARIC_RED,
                      border_color=FLY_AGARIC_RED,
-                     border_width=2).pack(side="right")
+                     border_width=2)
+        self.edit_in_new_window_button.pack(side="right")
 
         self.notes_textbox = ctk.CTkTextbox(
             metadata_frame,
@@ -253,7 +265,7 @@ class App(ctk.CTkToplevel):
         execution_frame = ctk.CTkFrame(scrollable_frame, fg_color="transparent")
         execution_frame.pack(pady=5, padx=10, fill="x")
         self.create_release_button = ctk.CTkButton(
-            execution_frame, text="🚀 Create Release",
+            execution_frame, text=self.translator.get("create_release_button"),
             state="disabled",
             command=self.start_release_process,
             fg_color=FLY_AGARIC_RED,
@@ -271,15 +283,17 @@ class App(ctk.CTkToplevel):
         log_header_frame = ctk.CTkFrame(progress_frame, fg_color="transparent")
         log_header_frame.pack(fill="x", padx=10, pady=5)
 
-        ctk.CTkLabel(log_header_frame, text="📋 Log",
-                    font=ctk.CTkFont(size=14, weight="bold")).pack(side="left", anchor="w")
+        self.log_label = ctk.CTkLabel(log_header_frame, text=self.translator.get("log_label"),
+                    font=ctk.CTkFont(size=14, weight="bold"))
+        self.log_label.pack(side="left", anchor="w")
         
-        ctk.CTkButton(log_header_frame, text="Open in new window",
+        self.open_in_new_window_button = ctk.CTkButton(log_header_frame, text=self.translator.get("open_in_new_window_button"),
                      command=self._open_console_window,
                      fg_color=FLY_AGARIC_BLACK,
                      hover_color=FLY_AGARIC_RED,
                      border_color=FLY_AGARIC_RED,
-                     border_width=2).pack(side="right")
+                     border_width=2)
+        self.open_in_new_window_button.pack(side="right")
 
         self.feedback_textbox = ctk.CTkTextbox(
             progress_frame,
@@ -294,7 +308,7 @@ class App(ctk.CTkToplevel):
 
     def _create_manage_releases_tab(self):
         """Creates the tab for managing existing releases."""
-        manage_tab = self.tabview.tab("Manage Releases")
+        manage_tab = self.tabview.tab("manage_releases")
 
         # Main frame for the tab
         main_frame = ctk.CTkFrame(manage_tab, fg_color="transparent")
@@ -309,7 +323,7 @@ class App(ctk.CTkToplevel):
 
         self.refresh_releases_button = ctk.CTkButton(
             action_frame,
-            text="🔄 Refresh Releases",
+            text=self.translator.get("refresh_releases_button"),
             command=self._start_fetch_releases,
             fg_color=FLY_AGARIC_RED,
             hover_color=FLY_AGARIC_WHITE,
@@ -319,7 +333,7 @@ class App(ctk.CTkToplevel):
         
         self.save_changes_button = ctk.CTkButton(
             action_frame,
-            text="💾 Save Changes",
+            text=self.translator.get("save_changes_button"),
             command=self._save_release_changes,
             state="disabled",
             fg_color=FLY_AGARIC_BLACK,
@@ -332,16 +346,17 @@ class App(ctk.CTkToplevel):
         # Scrollable frame for release list
         self.releases_scroll_frame = ctk.CTkScrollableFrame(
             main_frame,
-            label_text="Available Releases",
+            label_text=self.translator.get("available_releases_label"),
             orientation="horizontal"
         )
         self.releases_scroll_frame.grid(row=1, column=0, sticky="nsew")
 
         self.release_widgets = [] # To hold references to the widgets for each release
+        self.header_labels = []  # Initialize header labels list
 
     def _create_settings_tab(self):
         """Creates the settings tab with configuration options."""
-        settings_tab = self.tabview.tab("Settings")
+        settings_tab = self.tabview.tab("settings")
 
         # Create a scrollable frame to contain all settings widgets
         scrollable_frame = ctk.CTkScrollableFrame(settings_tab, fg_color="transparent")
@@ -356,11 +371,13 @@ class App(ctk.CTkToplevel):
                                   border_color=FLY_AGARIC_RED, border_width=2)
         index_frame.pack(pady=10, padx=10, fill="x")
 
-        ctk.CTkLabel(index_frame, text="📁 Index Repository Configuration",
-                    font=ctk.CTkFont(size=14, weight="bold")).pack(pady=5, padx=10, anchor="w")
+        self.index_repo_config_label = ctk.CTkLabel(index_frame, text=self.translator.get("index_repo_config_label"),
+                    font=ctk.CTkFont(size=14, weight="bold"))
+        self.index_repo_config_label.pack(pady=5, padx=10, anchor="w")
 
         # Clone URL
-        ctk.CTkLabel(index_frame, text="Git Clone URL:").pack(pady=2, padx=10, anchor="w")
+        self.git_clone_url_label = ctk.CTkLabel(index_frame, text=self.translator.get("git_clone_url_label"))
+        self.git_clone_url_label.pack(pady=2, padx=10, anchor="w")
         self.settings_widgets['index_git_clone_url'] = ctk.CTkEntry(
             index_frame,
             fg_color=FLY_AGARIC_WHITE,
@@ -370,7 +387,8 @@ class App(ctk.CTkToplevel):
         self.settings_widgets['index_git_clone_url'].pack(pady=2, padx=10, fill="x")
 
         # Branch
-        ctk.CTkLabel(index_frame, text="Branch:").pack(pady=2, padx=10, anchor="w")
+        self.branch_label = ctk.CTkLabel(index_frame, text=self.translator.get("branch_label"))
+        self.branch_label.pack(pady=2, padx=10, anchor="w")
         self.settings_widgets['index_git_branch'] = ctk.CTkEntry(
             index_frame,
             fg_color=FLY_AGARIC_WHITE,
@@ -380,7 +398,8 @@ class App(ctk.CTkToplevel):
         self.settings_widgets['index_git_branch'].pack(pady=2, padx=10, fill="x")
 
         # Local Folder
-        ctk.CTkLabel(index_frame, text="Local Folder Name:").pack(pady=2, padx=10, anchor="w")
+        self.local_folder_label = ctk.CTkLabel(index_frame, text=self.translator.get("local_folder_label"))
+        self.local_folder_label.pack(pady=2, padx=10, anchor="w")
         self.settings_widgets['index_git_local_folder'] = ctk.CTkEntry(
             index_frame,
             fg_color=FLY_AGARIC_WHITE,
@@ -394,22 +413,24 @@ class App(ctk.CTkToplevel):
                                    border_color=FLY_AGARIC_RED, border_width=2)
         tokens_frame.pack(pady=10, padx=10, fill="x")
 
-        ctk.CTkLabel(tokens_frame, text="🔐 Authentication Tokens",
-                    font=ctk.CTkFont(size=14, weight="bold")).pack(pady=5, padx=10, anchor="w")
+        self.auth_tokens_label = ctk.CTkLabel(tokens_frame, text=self.translator.get("auth_tokens_label"),
+                    font=ctk.CTkFont(size=14, weight="bold"))
+        self.auth_tokens_label.pack(pady=5, padx=10, anchor="w")
 
         # Single Token Checkbox and Field
         self.use_single_token_var = ctk.BooleanVar(value=True)
-        single_token_cb = ctk.CTkCheckBox(
+        self.use_single_token_checkbox = ctk.CTkCheckBox(
             tokens_frame,
-            text="Use single token for both Index and Assets",
+            text=self.translator.get("use_single_token_checkbox"),
             variable=self.use_single_token_var,
             command=self._toggle_token_fields,
             fg_color=FLY_AGARIC_RED,
             hover_color=FLY_AGARIC_WHITE
         )
-        single_token_cb.pack(pady=5, padx=10, anchor="w")
+        self.use_single_token_checkbox.pack(pady=5, padx=10, anchor="w")
 
-        ctk.CTkLabel(tokens_frame, text="GitHub Token:").pack(pady=2, padx=10, anchor="w")
+        self.github_token_label = ctk.CTkLabel(tokens_frame, text=self.translator.get("github_token_label"))
+        self.github_token_label.pack(pady=2, padx=10, anchor="w")
         self.settings_widgets['github_token_single'] = ctk.CTkEntry(
             tokens_frame,
             show="*",
@@ -420,7 +441,7 @@ class App(ctk.CTkToplevel):
         self.settings_widgets['github_token_single'].pack(pady=2, padx=10, fill="x")
 
         # Index Token (separate field)
-        self.index_token_label = ctk.CTkLabel(tokens_frame, text="Index Repository Token:")
+        self.index_token_label = ctk.CTkLabel(tokens_frame, text=self.translator.get("index_repo_token_label"))
         self.settings_widgets['github_token_for_index'] = ctk.CTkEntry(
             tokens_frame,
             show="*",
@@ -430,7 +451,7 @@ class App(ctk.CTkToplevel):
         )
 
         # Assets Token (separate field)
-        self.assets_token_label = ctk.CTkLabel(tokens_frame, text="Assets Repository Token:")
+        self.assets_token_label = ctk.CTkLabel(tokens_frame, text=self.translator.get("assets_repo_token_label"))
         self.settings_widgets['github_token_for_assets'] = ctk.CTkEntry(
             tokens_frame,
             show="*",
@@ -444,10 +465,12 @@ class App(ctk.CTkToplevel):
                                      border_color=FLY_AGARIC_RED, border_width=2)
         provider_frame.pack(pady=10, padx=10, fill="x")
 
-        ctk.CTkLabel(provider_frame, text="🗂️ Asset Provider Settings",
-                    font=ctk.CTkFont(size=14, weight="bold")).pack(pady=5, padx=10, anchor="w")
+        self.asset_provider_settings_label = ctk.CTkLabel(provider_frame, text=self.translator.get("asset_provider_settings_label"),
+                    font=ctk.CTkFont(size=14, weight="bold"))
+        self.asset_provider_settings_label.pack(pady=5, padx=10, anchor="w")
 
-        ctk.CTkLabel(provider_frame, text="GitHub Assets Repository:").pack(pady=2, padx=10, anchor="w")
+        self.github_assets_repo_label = ctk.CTkLabel(provider_frame, text=self.translator.get("github_assets_repo_label"))
+        self.github_assets_repo_label.pack(pady=2, padx=10, anchor="w")
         self.settings_widgets['github_asset_repo'] = ctk.CTkEntry(
             provider_frame,
             fg_color=FLY_AGARIC_WHITE,
@@ -461,38 +484,52 @@ class App(ctk.CTkToplevel):
                                    border_color=FLY_AGARIC_RED, border_width=2)
         catbox_frame.pack(pady=10, padx=10, fill="x")
 
-        ctk.CTkLabel(catbox_frame, text="📦 Catbox Configuration",
-                    font=ctk.CTkFont(size=14, weight="bold")).pack(pady=5, padx=10, anchor="w")
+        self.catbox_config_label = ctk.CTkLabel(catbox_frame, text=self.translator.get("catbox_config_label"),
+                    font=ctk.CTkFont(size=14, weight="bold"))
+        self.catbox_config_label.pack(pady=5, padx=10, anchor="w")
 
         # Anonymous upload checkbox
         self.catbox_anonymous_var = ctk.BooleanVar()
-        catbox_anon_cb = ctk.CTkCheckBox(
+        self.catbox_anonymous_checkbox = ctk.CTkCheckBox(
             catbox_frame,
-            text="Use anonymous uploads (no user hash required)",
+            text=self.translator.get("catbox_anonymous_checkbox"),
             variable=self.catbox_anonymous_var,
             command=self._toggle_catbox_fields,
             fg_color=FLY_AGARIC_RED,
             hover_color=FLY_AGARIC_WHITE
         )
-        catbox_anon_cb.pack(pady=5, padx=10, anchor="w")
+        self.catbox_anonymous_checkbox.pack(pady=5, padx=10, anchor="w")
 
-        self.catbox_hash_label = ctk.CTkLabel(catbox_frame, text="User Hash (optional):")
+        self.catbox_hash_label = ctk.CTkLabel(catbox_frame, text=self.translator.get("catbox_user_hash_label"))
         self.catbox_hash_label.pack(pady=2, padx=10, anchor="w")
         self.settings_widgets['catbox_user_hash'] = ctk.CTkEntry(
             catbox_frame,
             show="*",
             fg_color=FLY_AGARIC_WHITE,
             text_color=FLY_AGARIC_BLACK,
-            placeholder_text="Leave empty for anonymous uploads"
+            placeholder_text=self.translator.get('catbox_user_hash_placeholder') if hasattr(self, 'translator') else 'Leave empty for anonymous uploads'
         )
         self.settings_widgets['catbox_user_hash'].pack(pady=2, padx=10, fill="x")
+
+        # --- Language Switcher ---
+        language_frame = ctk.CTkFrame(scrollable_frame, fg_color="transparent")
+        language_frame.pack(pady=5, padx=10, fill="x", anchor="w")
+
+        self.language_label = ctk.CTkLabel(language_frame, text=self.translator.get("language_switcher_label"))
+        self.language_label.pack(side="left", padx=(0, 10))
+
+        self.language_option_menu = ctk.CTkOptionMenu(language_frame,
+                                                     values=["en", "ru"],
+                                                     command=self._on_language_select)
+        self.language_option_menu.set(self.translator.current_lang)
+        self.language_option_menu.pack(side="left")
 
         # Action Buttons
         button_frame = ctk.CTkFrame(scrollable_frame, fg_color="transparent")
         button_frame.pack(pady=10, padx=10, fill="x")
         self.save_settings_button = ctk.CTkButton(
             button_frame,
-            text="💾 Save Settings",
+            text=self.translator.get("save_settings_button"),
             command=self._save_settings,
             fg_color=FLY_AGARIC_RED,
             hover_color=FLY_AGARIC_WHITE,
@@ -502,7 +539,7 @@ class App(ctk.CTkToplevel):
 
         self.load_settings_button = ctk.CTkButton(
             button_frame,
-            text="🔄 Reload Settings",
+            text=self.translator.get("reload_settings_button"),
             command=self._load_settings_from_env,
             fg_color=FLY_AGARIC_BLACK,
             hover_color=FLY_AGARIC_RED,
@@ -550,12 +587,12 @@ class App(ctk.CTkToplevel):
         if is_anonymous:
             current_text = hash_widget.get().strip()
             # If the field contains a real hash, store it before overwriting
-            if current_text and current_text != "Anonymous upload":
+            if current_text != self.translator.get("catbox_anonymous_upload_text"):
                 self.catbox_user_hash_value = current_text
             
             hash_widget.configure(show="")  # Make text visible
             hash_widget.delete(0, 'end')
-            hash_widget.insert(0, "Anonymous upload")
+            hash_widget.insert(0, self.translator.get("catbox_anonymous_upload_text"))
             hash_widget.configure(state="disabled")
         else:
             hash_widget.configure(state="normal", show="*")  # Mask text
@@ -593,11 +630,13 @@ class App(ctk.CTkToplevel):
             # If anonymous is ON, the key is omitted, and the saved value is untouched.
             if not self.catbox_anonymous_var.get():
                 settings_to_save['catbox_user_hash'] = self.settings_widgets['catbox_user_hash'].get().strip()
-
+            
+            settings_to_save['ui_language'] = self.language_option_menu.get()
+    
             settings.save_settings(**settings_to_save)
             # Re-configure providers with new settings
             self._configure_providers()
-            self._log_status("Settings saved successfully!")
+            self._log_status(self.translator.get("settings_saved_successfully"))
         except Exception as e:
             logging.error(f"Failed to save settings: {e}", exc_info=True)
             self._log_status(f"ERROR: Failed to save settings: {e}")
@@ -631,7 +670,7 @@ class App(ctk.CTkToplevel):
         # Update UI visibility based on loaded state
         self._toggle_token_fields()
         self._toggle_catbox_fields()
-        self._log_status("Settings loaded from .env file!")
+        self._log_status(self.translator.get("settings_loaded_from_file"))
 
 
     def _get_entry_text(self, widget_key):
@@ -700,7 +739,7 @@ class App(ctk.CTkToplevel):
         self.file_list_textbox.configure(state="normal")
         self.file_list_textbox.delete("1.0", "end")
         if not self.file_paths:
-            self.file_list_textbox.insert("1.0", "🐛 Drag files here or use Browse...")
+            self.file_list_textbox.insert("1.0", self.translator.get("file_list_placeholder"))
         else:
             self.file_list_textbox.insert("1.0", "\n".join(self.file_paths))
         self.file_list_textbox.configure(state="disabled")
@@ -833,7 +872,7 @@ class App(ctk.CTkToplevel):
         self.feedback_textbox.delete("1.0", "end")
         self.feedback_textbox.configure(state="disabled")
 
-        self._log_status("🚀 Launching release process...")
+        self._log_status(self.translator.get("launching_release_process"))
 
         selected_providers = [
             provider
@@ -864,7 +903,7 @@ class App(ctk.CTkToplevel):
             workflow.run()
         except Exception as e:
             logging.error(f"Release workflow failed: {e}", exc_info=True)
-            self._log_status(f"ERROR: An unexpected error occurred: {e}")
+            self._log_status(self.translator.get("error_unexpected", error=str(e)))
         finally:
             # Schedule the UI update to run in the main thread
             self.after(0, self._toggle_ui_elements, True)
@@ -872,10 +911,10 @@ class App(ctk.CTkToplevel):
     def _start_fetch_releases(self):
         """Fetches release data in a background thread."""
         if self.is_fetching_releases:
-            self._log_status("A refresh is already in progress.")
+            self._log_status(self.translator.get("status_refresh_in_progress"))
             return
 
-        self._log_status("Fetching release information...")
+        self._log_status(self.translator.get("status_fetching_releases"))
         self.is_fetching_releases = True
         self.refresh_releases_button.configure(state="disabled")
 
@@ -915,7 +954,7 @@ class App(ctk.CTkToplevel):
 
         except Exception as e:
             logging.error(f"Failed to fetch versions.json: {e}", exc_info=True)
-            self._log_status(f"ERROR: Failed to fetch release index: {e}")
+            self._log_status(self.translator.get("error_failed_to_fetch", error=str(e)))
         finally:
             # Re-enable the refresh button and reset the flag
             self.after(0, lambda: self.refresh_releases_button.configure(state="normal"))
@@ -940,7 +979,7 @@ class App(ctk.CTkToplevel):
         if not release_data:
             # Check if a 'no releases' label already exists
             if not hasattr(self, '_no_releases_label') or not self._no_releases_label.winfo_exists():
-                self._no_releases_label = ctk.CTkLabel(self.releases_scroll_frame, text="No releases found.")
+                self._no_releases_label = ctk.CTkLabel(self.releases_scroll_frame, text=self.translator.get("no_releases_found"))
                 self._no_releases_label.pack(pady=10)
             return
         elif hasattr(self, '_no_releases_label') and self._no_releases_label.winfo_exists():
@@ -955,11 +994,19 @@ class App(ctk.CTkToplevel):
 
 
         # Create Header
+        self.header_labels = []
         header_font = ctk.CTkFont(weight="bold")
-        headers = ["Latest", "Version", "Upload Date", "SHA256", "Release Notes"]
+        headers = [
+            self.translator.get("header_latest"),
+            self.translator.get("header_version"),
+            self.translator.get("header_upload_date"),
+            self.translator.get("header_sha256"),
+            self.translator.get("header_release_notes")
+        ]
         for col, header_text in enumerate(headers):
             header = ctk.CTkLabel(self.releases_scroll_frame, text=header_text, font=header_font)
             header.grid(row=0, column=col, padx=10, pady=5, sticky="w")
+            self.header_labels.append(header)
 
         # Create Table Rows
         for i, release_entry in enumerate(release_data):
@@ -1003,7 +1050,7 @@ class App(ctk.CTkToplevel):
             # Release Notes Button
             notes_button = ctk.CTkButton(
                 self.releases_scroll_frame,
-                text="Edit Notes",
+                text=self.translator.get("edit_notes_button"),
                 command=lambda i=i: self._open_notes_popup(i)
             )
             notes_button.grid(row=row_index, column=4, padx=10, pady=5, sticky="ew")
@@ -1023,7 +1070,7 @@ class App(ctk.CTkToplevel):
                 "manifest_data": manifest_data,
                 "latest_var": latest_var
             })
-        self._log_status("Release information updated.")
+        self._log_status(self.translator.get("status_release_info_updated"))
     
     def _open_notes_popup(self, index: int):
         """Opens a popup to edit the release notes for a specific release."""
@@ -1093,13 +1140,124 @@ class App(ctk.CTkToplevel):
             self._start_fetch_releases()
         except Exception as e:
             logging.error(f"Failed to save changes: {e}", exc_info=True)
-            self._log_status(f"ERROR: Failed to save changes: {e}")
+            self._log_status(self.translator.get("error_failed_to_save", error=str(e)))
+
+
+    def _on_language_select(self, language: str):
+        """Sets the language and updates the UI."""
+        self.translator.set_language(language)
+        settings.UI_LANGUAGE = language
+        settings.save_settings(ui_language=language)
+        self._update_ui_text()
+
+    def _update_ui_text(self):
+        """Updates all text in the UI to the current language."""
+        self.title(self.translator.get("app_title"))
+
+        # Update tab names by accessing the internal segmented button
+        try:
+            segmented_button = self.tabview._segmented_button
+            buttons = segmented_button._buttons_dict
+            if "upload" in buttons:
+                buttons["upload"].configure(text=self.translator.get("upload_tab"))
+            if "manage_releases" in buttons:
+                buttons["manage_releases"].configure(text=self.translator.get("manage_releases_tab"))
+            if "settings" in buttons:
+                buttons["settings"].configure(text=self.translator.get("settings_tab"))
+        except (AttributeError, KeyError) as e:
+            logging.warning(f"Could not update tab names: {e}")
+
+        self._update_upload_tab_text()
+        self._update_manage_releases_tab_text()
+        self._update_settings_tab_text()
+
+    def _update_upload_tab_text(self):
+        self.provider_frame_label.configure(text=self.translator.get("asset_providers_label"))
+        self.files_to_upload_label.configure(text=self.translator.get("files_to_upload_label"))
+        self.browse_files_button.configure(text=self.translator.get("browse_files_button"))
+        self.clear_button.configure(text=self.translator.get("clear_button"))
+        self.release_version_label.configure(text=self.translator.get("release_version_label"))
+        self.version_entry.configure(placeholder_text=self.translator.get("release_version_placeholder"))
+        self.release_notes_label.configure(text=self.translator.get("release_notes_label"))
+        self.edit_in_new_window_button.configure(text=self.translator.get("edit_in_new_window_button"))
+        self.create_release_button.configure(text=self.translator.get("create_release_button"))
+        self.log_label.configure(text=self.translator.get("log_label"))
+        self.open_in_new_window_button.configure(text=self.translator.get("open_in_new_window_button"))
+
+        self.file_list_textbox.configure(state="normal")
+        self.file_list_textbox.delete("1.0", "end")
+        if not self.file_paths:
+            self.file_list_textbox.insert("1.0", self.translator.get("file_list_placeholder"))
+        self.file_list_textbox.configure(state="disabled")
+        
+        if self.notes_textbox.get("1.0", "end-1c").strip() == self.NOTES_PLACEHOLDER:
+            self.notes_textbox.delete("1.0", "end")
+            self.notes_textbox.insert("1.0", self.translator.get("notes_placeholder"))
+
+    def _update_manage_releases_tab_text(self):
+        if hasattr(self, 'refresh_releases_button'):
+            self.refresh_releases_button.configure(text=self.translator.get("refresh_releases_button"))
+        if hasattr(self, 'save_changes_button'):
+            self.save_changes_button.configure(text=self.translator.get("save_changes_button"))
+        if hasattr(self, 'releases_scroll_frame'):
+            self.releases_scroll_frame.configure(label_text=self.translator.get("available_releases_label"))
+        
+        headers = [
+            self.translator.get("header_latest"),
+            self.translator.get("header_version"),
+            self.translator.get("header_upload_date"),
+            self.translator.get("header_sha256"),
+            self.translator.get("header_release_notes")
+        ]
+        for col, header_text in enumerate(headers):
+            if col < len(self.header_labels):
+                self.header_labels[col].configure(text=header_text)
+            
+        for widget_info in self.release_widgets:
+            widget_info['notes_button'].configure(text=self.translator.get("edit_notes_button"))
+
+    def _update_settings_tab_text(self):
+        if hasattr(self, 'index_repo_config_label'):
+            self.index_repo_config_label.configure(text=self.translator.get("index_repo_config_label"))
+        if hasattr(self, 'git_clone_url_label'):
+            self.git_clone_url_label.configure(text=self.translator.get("git_clone_url_label"))
+        if hasattr(self, 'branch_label'):
+            self.branch_label.configure(text=self.translator.get("branch_label"))
+        if hasattr(self, 'local_folder_label'):
+            self.local_folder_label.configure(text=self.translator.get("local_folder_label"))
+        if hasattr(self, 'auth_tokens_label'):
+            self.auth_tokens_label.configure(text=self.translator.get("auth_tokens_label"))
+        if hasattr(self, 'use_single_token_checkbox'):
+            self.use_single_token_checkbox.configure(text=self.translator.get("use_single_token_checkbox"))
+        if hasattr(self, 'github_token_label'):
+            self.github_token_label.configure(text=self.translator.get("github_token_label"))
+        if hasattr(self, 'index_token_label'):
+            self.index_token_label.configure(text=self.translator.get("index_repo_token_label"))
+        if hasattr(self, 'assets_token_label'):
+            self.assets_token_label.configure(text=self.translator.get("assets_repo_token_label"))
+        if hasattr(self, 'asset_provider_settings_label'):
+            self.asset_provider_settings_label.configure(text=self.translator.get("asset_provider_settings_label"))
+        if hasattr(self, 'github_assets_repo_label'):
+            self.github_assets_repo_label.configure(text=self.translator.get("github_assets_repo_label"))
+        if hasattr(self, 'catbox_config_label'):
+            self.catbox_config_label.configure(text=self.translator.get("catbox_config_label"))
+        if hasattr(self, 'catbox_anonymous_checkbox'):
+            self.catbox_anonymous_checkbox.configure(text=self.translator.get("catbox_anonymous_checkbox"))
+        if hasattr(self, 'catbox_hash_label'):
+            self.catbox_hash_label.configure(text=self.translator.get("catbox_user_hash_label"))
+        if hasattr(self, 'save_settings_button'):
+            self.save_settings_button.configure(text=self.translator.get("save_settings_button"))
+        if hasattr(self, 'load_settings_button'):
+            self.load_settings_button.configure(text=self.translator.get("reload_settings_button"))
+        if hasattr(self, 'language_label'):
+            self.language_label.configure(text=self.translator.get("language_switcher_label"))
+        if hasattr(self, 'settings_widgets') and 'catbox_user_hash' in self.settings_widgets: self.settings_widgets['catbox_user_hash'].configure(placeholder_text=self.translator.get("catbox_user_hash_placeholder"))
 
 
 class ConsoleWindow(ctk.CTkToplevel):
     def __init__(self, master):
         super().__init__(master)
-        self.title("Console Log")
+        self.title(get_translator().get("console_window_title"))
         self.geometry("800x400")
 
         self.grid_columnconfigure(0, weight=1)

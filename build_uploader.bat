@@ -17,6 +17,7 @@ python -m PyInstaller ^
 --hidden-import=uploader.providers.github_release ^
 --collect-data customtkinter ^
 --collect-data tkinterdnd2 ^
+--add-data "uploader/locale;uploader/locale" ^
 run_uploader_main.py
 
 pause

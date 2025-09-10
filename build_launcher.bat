@@ -12,6 +12,7 @@ python -m PyInstaller ^
 --collect-data tkinter ^
 --hidden-import=requests ^
 --hidden-import=tkinterdnd2 ^
+--add-data "launcher/locale;launcher/locale" ^
 run_launcher_main.py
 
 pause

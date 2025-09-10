@@ -24,6 +24,7 @@ class Settings:
         # --- UI State Configuration ---
         self.UI_USE_SINGLE_TOKEN: bool = os.getenv("UI_USE_SINGLE_TOKEN", "True").lower() == "true"
         self.UI_CATBOX_ANONYMOUS: bool = os.getenv("UI_CATBOX_ANONYMOUS", "True").lower() == "true"
+        self.UI_LANGUAGE: str = os.getenv("UI_LANGUAGE", "en")
 
 
     def save_settings(self,
@@ -35,7 +36,8 @@ class Settings:
                      github_token_for_assets: Optional[str] = None,
                      catbox_user_hash: Optional[str] = None,
                      ui_use_single_token: Optional[bool] = None,
-                     ui_catbox_anonymous: Optional[bool] = None):
+                     ui_catbox_anonymous: Optional[bool] = None,
+                     ui_language: Optional[str] = None):
         """Update settings and save to .env file"""
         env_path = find_dotenv() or ".env"
 
@@ -75,5 +77,9 @@ class Settings:
         if ui_catbox_anonymous is not None:
             self.UI_CATBOX_ANONYMOUS = ui_catbox_anonymous
             set_key(env_path, "UI_CATBOX_ANONYMOUS", str(ui_catbox_anonymous))
+
+        if ui_language is not None:
+            self.UI_LANGUAGE = ui_language
+            set_key(env_path, "UI_LANGUAGE", ui_language)
 # Create a single instance of the settings to be used throughout the application
 settings = Settings()

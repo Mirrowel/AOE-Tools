@@ -3,6 +3,7 @@ from pydantic import BaseModel
 
 class Config(BaseModel):
     game_path: Optional[str] = None
+    language: Optional[str] = "en"
 
 class Version(BaseModel):
     version: str

@@ -12,6 +12,7 @@ from launcher.core.network import NetworkManager
 from launcher.core.backup import BackupManager
 from launcher.core.models import ReleaseInfo
 from launcher.utils.logging import log_queue, log_history
+from shared.localization import init_translator, get_translator
 
 # Custom colors for fly agaric theme
 FLY_AGARIC_RED = "#A52A2A"
@@ -23,17 +24,20 @@ class App(ctk.CTk):
     def __init__(self, master=None):
         super().__init__(master)
 
-        self.title("🍄 AOEngine Launcher")
+        self.title("AOEngine Launcher")
         self.geometry("700x500")
 
         # Set up fly agaric theme
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("dark-blue")
 
-        self._create_widgets()
-
         # --- Backend Integration ---
         self.config_manager = ConfigManager()
+
+        # --- Localization ---
+        self.translator = init_translator("launcher/locale", self.config_manager.get_config().language)
+
+        self._create_widgets()
         
         game_path = self.config_manager.get_config().game_path
         if not game_path or not Path(game_path).is_dir():
@@ -63,6 +67,8 @@ class App(ctk.CTk):
         self.latest_release: ReleaseInfo | None = None
         self.installed_version: str | None = "None"
 
+        self._update_ui_text()
+        
         # Start update check in a separate thread
         threading.Thread(target=self._check_for_updates, daemon=True).start()
 
@@ -70,9 +76,9 @@ class App(ctk.CTk):
 
     def _prompt_for_game_path(self):
         """Prompts the user to select the game directory."""
-        self.status_label.configure(text="Please select your Anomaly directory.")
+        self.status_label.configure(text=self.translator.get("status_game_path_not_set"))
         self.update_idletasks()
-        game_path = filedialog.askdirectory(title="Select your Anomaly game directory")
+        game_path = filedialog.askdirectory(title=self.translator.get("app_title"))
         if game_path:
             self.config_manager.update_config(game_path=game_path)
         else:
@@ -115,11 +121,11 @@ class App(ctk.CTk):
         """(Worker Thread) Fetches release info and updates the GUI via queue."""
         try:
             logging.info("Fetching release information...")
-            self._queue_ui_update(self.status_label.configure, text="Fetching release information...")
+            self._queue_ui_update(self.status_label.configure, text=self.translator.get("status_fetching_releases"))
             self.releases = self.network_manager.fetch_all_release_info()
             if not self.releases:
                 logging.warning("Could not fetch releases.")
-                self._queue_ui_update(self.status_label.configure, text="Could not fetch releases.")
+                self._queue_ui_update(self.status_label.configure, text=self.translator.get("status_fetch_failed"))
                 return
 
             # Find the latest release using the 'latest' flag, fallback to the first entry
@@ -144,36 +150,36 @@ class App(ctk.CTk):
 
         except Exception as e:
             logging.error(f"Error checking for updates: {e}", exc_info=True)
-            self._queue_ui_update(self.status_label.configure, text=f"Error: {e}")
+            self._queue_ui_update(self.status_label.configure, text=self.translator.get("error_generic", error=str(e)))
 
     def _refresh_installed_version(self):
         """Refreshes the installed version detection and updates the UI accordingly."""
         game_path_str = self.config_manager.get_config().game_path
         if not game_path_str:
-            self._queue_ui_update(self.status_label.configure, text="Game path not set.")
+            self._queue_ui_update(self.status_label.configure, text=self.translator.get("status_game_path_not_set"))
             return
 
         game_path = Path(game_path_str)
         version_file = game_path / "bin" / "version.json"
-        status_text = "Ready to install."
+        status_text = self.translator.get("status_ready_to_install")
 
         if version_file.exists():
             with open(version_file, "r") as f:
                 local_info = json.load(f)
             self.installed_version = local_info.get("version", "None")
             if hasattr(self, 'latest_release') and self.latest_release and self.installed_version == self.latest_release.version:
-                status_text = "Game is up to date."
+                status_text = self.translator.get("status_up_to_date")
             elif hasattr(self, 'latest_release') and self.latest_release:
-                status_text = f"Update to {self.latest_release.version} available!"
-            self._queue_ui_update(self.action_button.configure, text="Update")
+                status_text = self.translator.get("status_update_available", version=self.latest_release.version)
+            self._queue_ui_update(self.action_button.configure, text=self.translator.get("action_button_update"))
         else:
             self.installed_version = "None"
-            self._queue_ui_update(self.action_button.configure, text="Install")
+            self._queue_ui_update(self.action_button.configure, text=self.translator.get("action_button_install"))
 
         if hasattr(self, 'latest_release') and self.latest_release:
-            self._queue_ui_update(self.version_label.configure, text=f"Installed: {self.installed_version} | Latest: {self.latest_release.version}")
+            self._queue_ui_update(self.version_label.configure, text=self.translator.get("installed_label", installed_version=self.installed_version, latest_version=self.latest_release.version))
         else:
-            self._queue_ui_update(self.version_label.configure, text=f"Installed: {self.installed_version}")
+            self._queue_ui_update(self.version_label.configure, text=self.translator.get("installed_label_simple", installed_version=self.installed_version))
         self._queue_ui_update(self.status_label.configure, text=status_text)
 
     def _start_installation(self):
@@ -184,13 +190,13 @@ class App(ctk.CTk):
 
             if not target_release:
                 logging.error(f"Selected version {selected_version_str} not found in releases.")
-                self._queue_ui_update(self.status_label.configure, text="Selected version not found.")
+                self._queue_ui_update(self.status_label.configure, text=self.translator.get("status_version_not_found"))
                 return
 
             game_path_str = self.config_manager.get_config().game_path
             if not game_path_str:
                  logging.error("Game path not configured.")
-                 self._queue_ui_update(self.status_label.configure, text="Game path not configured.")
+                 self._queue_ui_update(self.status_label.configure, text=self.translator.get("status_game_path_not_configured"))
                  return
             game_path = Path(game_path_str)
             bin_path = game_path / "bin"
@@ -200,7 +206,7 @@ class App(ctk.CTk):
 
             # 1. Backup
             logging.info("Backing up 'bin' directory...")
-            self._queue_ui_update(self.status_label.configure, text="Backing up 'bin' directory...")
+            self._queue_ui_update(self.status_label.configure, text=self.translator.get("status_backing_up"))
             self._queue_ui_update(self.progress_bar.set, 0)
             backup_version = self.installed_version if self.installed_version != "None" else "initial"
             self.backup_manager.create_backup(version=backup_version, progress_callback=progress_callback)
@@ -208,7 +214,7 @@ class App(ctk.CTk):
 
             # 2. Download
             logging.info(f"Downloading {target_release.version}...")
-            self._queue_ui_update(self.status_label.configure, text=f"Downloading {target_release.version}...")
+            self._queue_ui_update(self.status_label.configure, text=self.translator.get("status_downloading", version=target_release.version))
             self._queue_ui_update(self.progress_bar.set, 0)
             
             def status_update_callback(message):
@@ -222,25 +228,25 @@ class App(ctk.CTk):
 
             if not download_path:
                 logging.error("Download failed from all sources.")
-                self._queue_ui_update(self.status_label.configure, text="Download failed from all sources.")
+                self._queue_ui_update(self.status_label.configure, text=self.translator.get("status_download_failed"))
                 return
             
             logging.info(f"Download successful. File saved to: {download_path}")
 
             # 3. Verify
             logging.info("Verifying file integrity...")
-            self._queue_ui_update(self.status_label.configure, text="Verifying file integrity...")
+            self._queue_ui_update(self.status_label.configure, text=self.translator.get("status_verifying"))
             verified = self.network_manager.verify_sha256(download_path, target_release.zip_sha256)
             if not verified:
                 logging.error("Hash mismatch! Download may be corrupt.")
-                self._queue_ui_update(self.status_label.configure, text="Hash mismatch! Download may be corrupt.")
+                self._queue_ui_update(self.status_label.configure, text=self.translator.get("status_hash_mismatch"))
                 return
             logging.info("File verification successful.")
             self._queue_ui_update(self.progress_bar.set, 1) # File verification complete
 
             # 4. Extract
             logging.info(f"Extracting files to {bin_path}...")
-            self._queue_ui_update(self.status_label.configure, text="Extracting files...")
+            self._queue_ui_update(self.status_label.configure, text=self.translator.get("status_extracting"))
             self._queue_ui_update(self.progress_bar.set, 0)
             self.network_manager.extract_zip(download_path, str(bin_path), progress_callback=progress_callback)
             logging.info("Extraction complete.")
@@ -253,15 +259,15 @@ class App(ctk.CTk):
                 json.dump({"version": target_release.version, "manifest_url": manifest_url}, f, indent=4)
             logging.info(f"Created version.json for version {target_release.version}")
 
-            self._queue_ui_update(self.status_label.configure, text="Installation complete!")
+            self._queue_ui_update(self.status_label.configure, text=self.translator.get("status_installation_complete"))
             self._queue_ui_update(self.progress_bar.set, 1)
             self.installed_version = target_release.version
-            self._queue_ui_update(self.version_label.configure, text=f"Installed: {self.installed_version} | Latest: {self.latest_release.version}")
+            self._queue_ui_update(self.version_label.configure, text=self.translator.get("installed_label", installed_version=self.installed_version, latest_version=self.latest_release.version))
             logging.info("Installation complete!")
 
         except Exception as e:
             logging.error(f"Installation failed: {e}", exc_info=True)
-            self._queue_ui_update(self.status_label.configure, text=f"Installation failed: {e}")
+            self._queue_ui_update(self.status_label.configure, text=self.translator.get("status_installation_failed", error=str(e)))
         finally:
             self._queue_ui_update(self.action_button.configure, state="normal")
             # Clean up downloaded file
@@ -284,11 +290,10 @@ class App(ctk.CTk):
         version_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
         version_frame.grid(row=0, column=0, columnspan=2, pady=5, padx=10, sticky="ew")
 
-        self.version_label = ctk.CTkLabel(version_frame, text="Installed: v0.0.0 | Latest: v0.0.0",
-                                          font=ctk.CTkFont(size=12))
+        self.version_label = ctk.CTkLabel(version_frame, text="", font=ctk.CTkFont(size=12))
         self.version_label.pack(side="left")
 
-        self.version_option_menu = ctk.CTkOptionMenu(version_frame, values=["v0.0.0"],
+        self.version_option_menu = ctk.CTkOptionMenu(version_frame, values=[],
                                                      fg_color=FLY_AGARIC_RED,
                                                      button_color=FLY_AGARIC_RED,
                                                      button_hover_color=FLY_AGARIC_WHITE,
@@ -296,12 +301,11 @@ class App(ctk.CTk):
         self.version_option_menu.pack(side="right")
 
         # --- Status Label ---
-        self.status_label = ctk.CTkLabel(main_frame, text="Checking for updates...",
-                                         font=ctk.CTkFont(size=14, weight="bold"))
+        self.status_label = ctk.CTkLabel(main_frame, text="", font=ctk.CTkFont(size=14, weight="bold"))
         self.status_label.grid(row=1, column=0, pady=5, padx=10, sticky="ew")
 
         # --- Action Button ---
-        self.action_button = ctk.CTkButton(main_frame, text="Install",
+        self.action_button = ctk.CTkButton(main_frame, text="",
                                            command=self._on_action_button_click,
                                            fg_color=FLY_AGARIC_RED,
                                            hover_color=FLY_AGARIC_WHITE,
@@ -316,7 +320,6 @@ class App(ctk.CTk):
                                                     border_color=FLY_AGARIC_RED,
                                                     border_width=2)
         self.release_notes_textbox.grid(row=3, column=0, pady=5, padx=10, sticky="nsew")
-        self.release_notes_textbox.insert("1.0", "Release notes will be displayed here.")
         self.release_notes_textbox.configure(state="disabled")
 
         # --- Progress Bar ---
@@ -326,7 +329,7 @@ class App(ctk.CTk):
         self.progress_bar.grid(row=4, column=0, pady=10, padx=10, sticky="ew")
 
         # --- Backup Management ---
-        self.backup_button = ctk.CTkButton(main_frame, text="Manage Backups",
+        self.backup_button = ctk.CTkButton(main_frame, text="",
                                            command=self._open_backup_window,
                                            fg_color=FLY_AGARIC_RED,
                                            hover_color=FLY_AGARIC_WHITE,
@@ -334,12 +337,28 @@ class App(ctk.CTk):
         self.backup_button.grid(row=5, column=0, pady=10, padx=10, sticky="ew")
 
         # --- Console Window ---
-        self.console_button = ctk.CTkButton(main_frame, text="Console",
+        self.console_button = ctk.CTkButton(main_frame, text="",
                                            command=self._open_console_window,
                                            fg_color=FLY_AGARIC_RED,
                                            hover_color=FLY_AGARIC_WHITE,
                                            text_color=FLY_AGARIC_WHITE)
         self.console_button.grid(row=6, column=0, pady=10, padx=10, sticky="ew")
+
+        # --- Language Switcher ---
+        language_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        language_frame.grid(row=7, column=0, pady=5, padx=10, sticky="ew")
+
+        self.language_label = ctk.CTkLabel(language_frame, text=self.translator.get("language_switcher_label"))
+        self.language_label.pack(side="left")
+
+        self.language_option_menu = ctk.CTkOptionMenu(language_frame,
+                                                     values=["en", "ru"],
+                                                     command=self._on_language_select,
+                                                     fg_color=FLY_AGARIC_RED,
+                                                     button_color=FLY_AGARIC_RED,
+                                                     button_hover_color=FLY_AGARIC_WHITE)
+        self.language_option_menu.set(self.translator.current_lang)
+        self.language_option_menu.pack(side="right")
 
     def _open_console_window(self):
         if self.console_window is None or not self.console_window.winfo_exists():
@@ -364,6 +383,36 @@ class App(ctk.CTk):
         self.action_button.configure(state="disabled")
         threading.Thread(target=self._start_installation, daemon=True).start()
 
+    def _on_language_select(self, language: str):
+        """Sets the language and updates the UI."""
+        self.translator.set_language(language)
+        self.config_manager.update_config(language=language)
+        self._update_ui_text()
+
+    def _update_ui_text(self):
+        """Updates all text in the UI to the current language."""
+        self.title(self.translator.get("app_title"))
+
+        # Main window
+        self.status_label.configure(text=self.translator.get("status_checking_updates"))
+        self.action_button.configure(text=self.translator.get("action_button_install"))
+        
+        self.release_notes_textbox.configure(state="normal")
+        self.release_notes_textbox.delete("1.0", "end")
+        self.release_notes_textbox.insert("1.0", self.translator.get("release_notes_placeholder"))
+        self.release_notes_textbox.configure(state="disabled")
+
+        self.backup_button.configure(text=self.translator.get("backup_button"))
+        self.console_button.configure(text=self.translator.get("console_button"))
+        
+        # This will be updated with real versions later
+        installed = self.installed_version if self.installed_version else "None"
+        latest = self.latest_release.version if self.latest_release else "N/A"
+        self.version_label.configure(text=self.translator.get("installed_label", installed_version=installed, latest_version=latest))
+
+        if hasattr(self, "language_label"):
+            self.language_label.configure(text=self.translator.get("language_switcher_label"))
+
 
 class BackupWindow(ctk.CTkToplevel):
     def __init__(self, master, backup_manager: BackupManager):
@@ -371,18 +420,18 @@ class BackupWindow(ctk.CTkToplevel):
         self.backup_manager = backup_manager
         self.master = master
 
-        self.title("🍄 Backup Management")
+        self.title(get_translator().get("backup_window_title"))
         self.geometry("500x400")
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
 
         # --- Title ---
-        title_label = ctk.CTkLabel(self, text="Available Backups", font=ctk.CTkFont(size=16, weight="bold"))
+        title_label = ctk.CTkLabel(self, text=get_translator().get("backup_window_header"), font=ctk.CTkFont(size=16, weight="bold"))
         title_label.grid(row=0, column=0, pady=10, padx=10, sticky="ew")
 
         # --- Scrollable Frame for Backups ---
-        self.scrollable_frame = ctk.CTkScrollableFrame(self, label_text="Backups",
+        self.scrollable_frame = ctk.CTkScrollableFrame(self, label_text=get_translator().get("backup_list_header"),
                                                        fg_color=FLY_AGARIC_BLACK,
                                                        border_color=FLY_AGARIC_RED,
                                                        border_width=2)
@@ -407,7 +456,7 @@ class BackupWindow(ctk.CTkToplevel):
 
         backups = self.backup_manager.get_available_backups()
         if not backups:
-            no_backup_label = ctk.CTkLabel(self.scrollable_frame, text="No backups found.")
+            no_backup_label = ctk.CTkLabel(self.scrollable_frame, text=get_translator().get("no_backups_found"))
             no_backup_label.pack(pady=10)
             return
 
@@ -423,7 +472,7 @@ class BackupWindow(ctk.CTkToplevel):
             button_frame = ctk.CTkFrame(backup_frame, fg_color="transparent")
             button_frame.grid(row=0, column=1, sticky="e")
 
-            restore_button = ctk.CTkButton(button_frame, text="Restore",
+            restore_button = ctk.CTkButton(button_frame, text=get_translator().get("backup_restore_button"),
                                            command=lambda name=backup_name: self._start_restore(name),
                                            fg_color=FLY_AGARIC_RED,
                                            hover_color=FLY_AGARIC_WHITE,
@@ -431,7 +480,7 @@ class BackupWindow(ctk.CTkToplevel):
                                            width=80)
             restore_button.pack(side="left", padx=5)
 
-            delete_button = ctk.CTkButton(button_frame, text="Delete",
+            delete_button = ctk.CTkButton(button_frame, text=get_translator().get("backup_delete_button"),
                                           command=lambda name=backup_name: self._confirm_delete(name),
                                           fg_color=FLY_AGARIC_WHITE,
                                           hover_color=FLY_AGARIC_RED,
@@ -441,23 +490,23 @@ class BackupWindow(ctk.CTkToplevel):
 
     def _confirm_delete(self, backup_name: str):
         """Asks for confirmation before deleting a backup."""
-        if messagebox.askyesno("Confirm Deletion", f"Are you sure you want to delete the backup '{backup_name}'?"):
+        if messagebox.askyesno(get_translator().get("confirm_delete_title"), get_translator().get("confirm_delete_message", backup_name=backup_name)):
             self._start_delete(backup_name)
 
     def _start_delete(self, backup_name: str):
         """Starts the delete process in a worker thread."""
         self._set_buttons_state("disabled")
-        self.status_label.configure(text=f"Deleting {backup_name}...")
+        self.status_label.configure(text=get_translator().get("status_deleting", backup_name=backup_name))
         threading.Thread(target=self._delete_worker, args=(backup_name,), daemon=True).start()
 
     def _delete_worker(self, backup_name: str):
         """(Worker Thread) Performs the delete operation."""
         try:
             self.backup_manager.delete_backup(backup_name)
-            self.master._queue_ui_update(self.status_label.configure, text=f"Successfully deleted {backup_name}.")
+            self.master._queue_ui_update(self.status_label.configure, text=get_translator().get("status_delete_success", backup_name=backup_name))
             self.master._queue_ui_update(self._populate_backup_list)
         except Exception as e:
-            self.master._queue_ui_update(self.status_label.configure, text=f"Error deleting backup: {e}")
+            self.master._queue_ui_update(self.status_label.configure, text=get_translator().get("status_delete_error", error=str(e)))
         finally:
             self.master._queue_ui_update(self._set_buttons_state, "normal")
 
@@ -468,7 +517,7 @@ class BackupWindow(ctk.CTkToplevel):
             self.master._queue_ui_update(self.progress_bar.set, progress_fraction)
 
         self._set_buttons_state("disabled")
-        self.status_label.configure(text=f"Restoring {backup_name}...")
+        self.status_label.configure(text=get_translator().get("status_restoring", backup_name=backup_name))
         self.progress_bar.set(0)
         threading.Thread(target=self._restore_worker, args=(backup_name, progress_callback), daemon=True).start()
 
@@ -478,9 +527,9 @@ class BackupWindow(ctk.CTkToplevel):
             self.backup_manager.restore_backup(backup_name, progress_callback=progress_callback)
             # Refresh the main window's installed version after successful restore
             self.master._refresh_installed_version()
-            self.master._queue_ui_update(self.status_label.configure, text=f"Successfully restored {backup_name}.")
+            self.master._queue_ui_update(self.status_label.configure, text=get_translator().get("status_restore_success", backup_name=backup_name))
         except Exception as e:
-            self.master._queue_ui_update(self.status_label.configure, text=f"Error restoring backup: {e}")
+            self.master._queue_ui_update(self.status_label.configure, text=get_translator().get("status_restore_error", error=str(e)))
         finally:
             self.master._queue_ui_update(self._set_buttons_state, "normal")
 
@@ -498,7 +547,7 @@ class BackupWindow(ctk.CTkToplevel):
 class ConsoleWindow(ctk.CTkToplevel):
     def __init__(self, master):
         super().__init__(master)
-        self.title("🍄 Console Log")
+        self.title(get_translator().get("console_window_title"))
         self.geometry("800x400")
 
         self.grid_columnconfigure(0, weight=1)
