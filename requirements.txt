@@ -7,3 +7,4 @@ python-dotenv
 packaging
 tkinterdnd2
 pydantic
+zstandard

@@ -1,6 +1,7 @@
 import hashlib
 import tempfile
-import zipfile
+import tarfile
+import zstandard as zstd
 import requests
 import os
 import concurrent.futures
@@ -120,7 +121,7 @@ class NetworkManager:
             with open(file_path, "rb") as f:
                 for byte_block in iter(lambda: f.read(4096), b""):
                     sha256_hash.update(byte_block)
-            
+
             calculated_hash = sha256_hash.hexdigest()
             is_valid = calculated_hash == expected_hash
             if is_valid:
@@ -132,38 +133,49 @@ class NetworkManager:
             logging.error(f"File not found for hash verification: {file_path}")
             return False
 
-    def extract_zip(self, zip_path: str, destination: str, progress_callback: Optional[Callable[[float], None]] = None):
+    def extract_archive(self, archive_path: str, destination: str, manifest: Manifest, progress_callback: Optional[Callable[[float], None]] = None):
         """
-        Extracts a zip archive to a specified destination.
+        Extracts a .tar.zst archive to a specified destination using streaming.
 
         Args:
-            zip_path: The path to the zip file.
+            archive_path: The path to the .tar.zst file.
             destination: The directory to extract the files to.
+            manifest: The release manifest containing the file list for progress tracking.
             progress_callback: An optional function to call with progress fraction.
         """
         try:
             os.makedirs(destination, exist_ok=True)
-            logging.info(f"Extracting '{zip_path}' to '{destination}'...")
-            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                total_files = len(zip_ref.infolist())
-                logging.info(f"Zip archive contains {total_files} files.")
-                last_progress = 0
-                step = 0.01  # Send updates every 1% progress
-                for i, member in enumerate(zip_ref.infolist()):
-                    zip_ref.extract(member, destination)
-                    logging.debug(f"Extracted {member.filename}")
-                    current_progress = (i + 1) / total_files
-                    if progress_callback and current_progress - last_progress >= step:
-                        progress_callback(current_progress)
-                        last_progress = current_progress
-                # Send final 100% update
+            logging.info(f"Extracting '{archive_path}' to '{destination}'...")
+
+            total_files = len(manifest.files)
+            logging.info(f"Archive contains {total_files} files.")
+
+            if total_files == 0:
+                logging.warning("Manifest lists zero files; extraction will be skipped.")
                 if progress_callback:
                     progress_callback(1.0)
-            logging.info(f"Successfully extracted {zip_path} to {destination}")
-        except zipfile.BadZipFile:
-            logging.error(f"Error: The file {zip_path} is not a valid zip file or is corrupted.")
+                return
+
+            dctx = zstd.ZstdDecompressor()
+            with open(archive_path, "rb") as f:
+                with dctx.stream_reader(f) as reader:
+                    with tarfile.open(fileobj=reader, mode="r|") as tar:
+                        for i, member in enumerate(tar):
+                            tar.extract(member, path=destination)
+                            logging.debug(f"Extracted {member.name}")
+                            if progress_callback:
+                                progress_callback((i + 1) / total_files)
+
+            if progress_callback:
+                progress_callback(1.0) # Ensure 100% is reported
+
+            logging.info(f"Successfully extracted {archive_path} to {destination}")
+        except tarfile.TarError as e:
+            logging.error(f"Error: The file {archive_path} is not a valid tar archive or is corrupted: {e}")
+        except zstd.ZstdError as e:
+            logging.error(f"Error: Zstandard decompression failed for {archive_path}: {e}")
         except IOError as e:
-            logging.error(f"Error reading or writing file: {e}")
+            logging.error(f"Error reading or writing file during extraction: {e}")
 
     def _get_sorted_urls(self, urls: Dict[str, str]) -> List[tuple[str, str]]:
         """Sorts URLs to prioritize 'GitHub Git'."""
@@ -177,11 +189,14 @@ class NetworkManager:
             sorted_urls = list(urls.items())
         return sorted_urls
 
-    def fetch_manifest(self, version: Version) -> Optional[Manifest]:
+    def fetch_manifest(self, version: Version, status_callback: Optional[Callable[[str], None]] = None) -> Optional[Manifest]:
         """
         Downloads and parses the manifest for a given version.
         """
         logging.info(f"Fetching manifest for version {version.version}")
+        if status_callback:
+            status_callback("Fetching release metadata...")
+
         downloaded_path = self.download_file_with_fallback(version.manifest_urls, is_manifest=True)
         if downloaded_path:
             try:
@@ -191,9 +206,14 @@ class NetworkManager:
                     return Manifest.model_validate_json(manifest_data)
             except Exception as e:
                 logging.error(f"Error parsing manifest file: {e}")
+                if status_callback:
+                    status_callback(f"Error: Could not parse release metadata.")
                 return None
             finally:
                 os.remove(downloaded_path)
+
+        if status_callback:
+            status_callback(f"Error: Could not download release metadata.")
         return None
 
     def fetch_all_release_info(self) -> List[ReleaseInfo]:

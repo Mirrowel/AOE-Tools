@@ -88,26 +88,28 @@ class GitHubGitProvider(IndexProvider):
         self.repo.remotes.origin.push()
 
     @git_retry()
-    def commit_manifest_file(self, file_path: str, version: str) -> str:
+    def commit_manifest_file(self, file_path: str, version: str, profiler: bool) -> str:
         """Commits a manifest file to a 'manifests' directory and returns its URL."""
         manifests_dir = os.path.abspath(os.path.join(self.local_folder, 'manifests'))
         os.makedirs(manifests_dir, exist_ok=True)
-        
-        new_manifest_path = os.path.join(manifests_dir, f"manifest-v{version}.json")
+
+        version_str = f"{version}(Profiler)" if profiler else version
+        manifest_filename = f"manifest-v{version_str}.json"
+        new_manifest_path = os.path.join(manifests_dir, manifest_filename)
         shutil.copy(file_path, new_manifest_path)
-        
+
         self.repo.index.add([new_manifest_path])
-        commit_message = f"Add manifest for release v{version}"
+        commit_message = f"Add manifest for release v{version_str}"
         self.repo.index.commit(commit_message)
         self.repo.remotes.origin.push()
-        
+
         # Construct the raw GitHub URL
         # Assumes the clone URL is in the format https://github.com/user/repo.git
         base_url = self.clone_url.replace(".git", "")
         # This is a bit of a hack. A more robust solution might use the GitHub API
         # to get the raw URL, but this is simpler for now.
-        raw_url = f"{base_url}/raw/{self.branch}/manifests/manifest-v{version}.json"
-        
+        raw_url = f"{base_url}/raw/{self.branch}/manifests/{manifest_filename}"
+
         return raw_url
 
     def save_index_content(self, new_content: list):

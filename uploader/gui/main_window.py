@@ -232,6 +232,14 @@ class App(ctk.CTkToplevel):
         self.version_entry.pack(pady=5, padx=10, fill="x")
         self.version_entry.bind("<KeyRelease>", self._validate_inputs)
 
+        self.profiler_checkbox = ctk.CTkCheckBox(
+            metadata_frame,
+            text=self.translator.get("profiler_build_checkbox"),
+            fg_color=FLY_AGARIC_RED,
+            hover_color=FLY_AGARIC_WHITE
+        )
+        self.profiler_checkbox.pack(pady=5, padx=10, anchor="w")
+
         release_notes_frame = ctk.CTkFrame(metadata_frame, fg_color="transparent")
         release_notes_frame.pack(fill="x", padx=10, pady=5)
         
@@ -789,7 +797,7 @@ class App(ctk.CTkToplevel):
 
     def _find_and_toggle_file_buttons(self, state):
         """Helper method to find and toggle file action buttons."""
-        upload_tab = self.tabview.tab("Upload")
+        upload_tab = self.tabview.tab("upload")
 
         # Recursively search for buttons in the upload tab
         def toggle_buttons_in_frame(frame, new_state):
@@ -891,6 +899,7 @@ class App(ctk.CTkToplevel):
             asset_providers=selected_providers,
             index_provider=self.index_provider,
             status_callback=self._log_status,
+            profiler=self.profiler_checkbox.get(),
         )
 
         thread = threading.Thread(target=self._run_workflow_in_thread, args=(workflow,))
@@ -987,10 +996,11 @@ class App(ctk.CTkToplevel):
 
         # Configure grid columns for the table
         self.releases_scroll_frame.grid_columnconfigure(0, weight=0, minsize=50)   # Checkbox
-        self.releases_scroll_frame.grid_columnconfigure(1, weight=1, minsize=100)  # Version
-        self.releases_scroll_frame.grid_columnconfigure(2, weight=2, minsize=150)  # Upload Date
-        self.releases_scroll_frame.grid_columnconfigure(3, weight=1, minsize=150)  # SHA
-        self.releases_scroll_frame.grid_columnconfigure(4, weight=3, minsize=200)  # Release Notes
+        self.releases_scroll_frame.grid_columnconfigure(1, weight=0, minsize=50)   # Profiler
+        self.releases_scroll_frame.grid_columnconfigure(2, weight=1, minsize=100)  # Version
+        self.releases_scroll_frame.grid_columnconfigure(3, weight=2, minsize=150)  # Upload Date
+        self.releases_scroll_frame.grid_columnconfigure(4, weight=1, minsize=150)  # SHA
+        self.releases_scroll_frame.grid_columnconfigure(5, weight=3, minsize=200)  # Release Notes
 
 
         # Create Header
@@ -998,6 +1008,7 @@ class App(ctk.CTkToplevel):
         header_font = ctk.CTkFont(weight="bold")
         headers = [
             self.translator.get("header_latest"),
+            self.translator.get("header_profiler"),
             self.translator.get("header_version"),
             self.translator.get("header_upload_date"),
             self.translator.get("header_sha256"),
@@ -1017,35 +1028,47 @@ class App(ctk.CTkToplevel):
 
             version = version_data.get("version", "N/A")
             upload_date = manifest_data.get("upload_date", "N/A")
-            sha = manifest_data.get("zip_sha256", "N/A")
+            sha = manifest_data.get("archive_sha256", "N/A")
             is_latest = version_data.get("latest", False)
+            is_profiler = manifest_data.get("profiler", False)
             release_notes = manifest_data.get("release_notes", "")
 
 
             # Latest Checkbox
             latest_var = ctk.BooleanVar(value=is_latest)
-            checkbox = ctk.CTkCheckBox(
+            latest_checkbox = ctk.CTkCheckBox(
                 self.releases_scroll_frame,
                 text="",
                 variable=latest_var,
                 command=lambda var=latest_var: self._on_latest_checkbox_change(var),
                 fg_color=FLY_AGARIC_RED
             )
-            checkbox.grid(row=row_index, column=0, padx=10, pady=5)
+            latest_checkbox.grid(row=row_index, column=0, padx=10, pady=5)
+            
+            # Profiler Checkbox
+            profiler_var = ctk.BooleanVar(value=is_profiler)
+            profiler_checkbox = ctk.CTkCheckBox(
+                self.releases_scroll_frame,
+                text="",
+                variable=profiler_var,
+                command=self._on_widget_change,
+                fg_color=FLY_AGARIC_RED
+            )
+            profiler_checkbox.grid(row=row_index, column=1, padx=10, pady=5)
 
             # Version Label (not editable)
             version_label = ctk.CTkLabel(self.releases_scroll_frame, text=version)
-            version_label.grid(row=row_index, column=1, padx=10, pady=5, sticky="ew")
+            version_label.grid(row=row_index, column=2, padx=10, pady=5, sticky="ew")
 
             # Upload Date Entry
             date_entry = ctk.CTkEntry(self.releases_scroll_frame)
             date_entry.insert(0, upload_date)
-            date_entry.grid(row=row_index, column=2, padx=10, pady=5, sticky="ew")
+            date_entry.grid(row=row_index, column=3, padx=10, pady=5, sticky="ew")
             date_entry.bind("<KeyRelease>", self._on_widget_change)
             
             # SHA Label (not editable)
             sha_label = ctk.CTkLabel(self.releases_scroll_frame, text=sha[:12] + "...")
-            sha_label.grid(row=row_index, column=3, padx=10, pady=5, sticky="ew")
+            sha_label.grid(row=row_index, column=4, padx=10, pady=5, sticky="ew")
 
             # Release Notes Button
             notes_button = ctk.CTkButton(
@@ -1053,14 +1076,15 @@ class App(ctk.CTkToplevel):
                 text=self.translator.get("edit_notes_button"),
                 command=lambda i=i: self._open_notes_popup(i)
             )
-            notes_button.grid(row=row_index, column=4, padx=10, pady=5, sticky="ew")
+            notes_button.grid(row=row_index, column=5, padx=10, pady=5, sticky="ew")
 
             # Hidden notes entry to store the value
             notes_var = ctk.StringVar(value=release_notes)
 
 
             self.release_widgets.append({
-                "checkbox": checkbox,
+                "latest_checkbox": latest_checkbox,
+                "profiler_checkbox": profiler_checkbox,
                 "version_label": version_label,
                 "date_entry": date_entry,
                 "sha_label": sha_label,
@@ -1068,7 +1092,8 @@ class App(ctk.CTkToplevel):
                 "notes_var": notes_var,
                 "version_data": version_data,
                 "manifest_data": manifest_data,
-                "latest_var": latest_var
+                "latest_var": latest_var,
+                "profiler_var": profiler_var,
             })
         self._log_status(self.translator.get("status_release_info_updated"))
     
@@ -1113,7 +1138,9 @@ class App(ctk.CTkToplevel):
                 "version": original_manifest_data.get("version"),
                 "release_notes": widget_info['notes_var'].get(),
                 "upload_date": widget_info['date_entry'].get(),
-                "zip_sha256": original_manifest_data.get("zip_sha256") # Not editable
+                "archive_sha256": original_manifest_data.get("archive_sha256"), # Not editable
+                "files": original_manifest_data.get("files", []), # Preserve the files list
+                "profiler": widget_info['profiler_var'].get(),
             }
 
             # Only add manifest to the update list if it has actually changed
@@ -1123,13 +1150,17 @@ class App(ctk.CTkToplevel):
             # --- Reconstruct versions.json entry ---
             version_entry = original_version_data.copy() # Start with original data
             is_latest = widget_info['latest_var'].get()
+            is_profiler = widget_info['profiler_var'].get()
 
-            if is_latest:
+            if is_latest and not is_profiler:
                 version_entry["latest"] = True
             else:
-                # Ensure the 'latest' key is removed if the box is unchecked
+                # Ensure the 'latest' key is removed if the box is unchecked or it's a profiler build
                 version_entry.pop("latest", None)
             
+            # Update profiler status in versions.json as well
+            version_entry["profiler"] = is_profiler
+
             updated_versions_content.append(version_entry)
 
         try:
@@ -1178,6 +1209,7 @@ class App(ctk.CTkToplevel):
         self.clear_button.configure(text=self.translator.get("clear_button"))
         self.release_version_label.configure(text=self.translator.get("release_version_label"))
         self.version_entry.configure(placeholder_text=self.translator.get("release_version_placeholder"))
+        self.profiler_checkbox.configure(text=self.translator.get("profiler_build_checkbox"))
         self.release_notes_label.configure(text=self.translator.get("release_notes_label"))
         self.edit_in_new_window_button.configure(text=self.translator.get("edit_in_new_window_button"))
         self.create_release_button.configure(text=self.translator.get("create_release_button"))
@@ -1204,6 +1236,7 @@ class App(ctk.CTkToplevel):
         
         headers = [
             self.translator.get("header_latest"),
+            self.translator.get("header_profiler"),
             self.translator.get("header_version"),
             self.translator.get("header_upload_date"),
             self.translator.get("header_sha256"),

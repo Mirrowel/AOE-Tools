@@ -3,7 +3,8 @@ import json
 import logging
 import os
 import tempfile
-import zipfile
+import tarfile
+import zstandard as zstd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Callable, Dict, List, Tuple
@@ -20,6 +21,7 @@ class ReleaseWorkflow:
         asset_providers: List[AssetProvider],
         index_provider: IndexProvider,
         status_callback: Callable[[str], None],
+        profiler: bool = False,
     ):
         self.version = version
         self.notes = notes
@@ -27,6 +29,7 @@ class ReleaseWorkflow:
         self.asset_providers = asset_providers
         self.index_provider = index_provider
         self.status_callback = status_callback
+        self.profiler = profiler
 
     def _log(self, message: str):
         logging.info(message)
@@ -40,26 +43,36 @@ class ReleaseWorkflow:
                 sha256.update(chunk)
         return sha256.hexdigest()
 
-    def _create_zip_archive(self, temp_dir: str) -> str:
-        """Creates a zip archive from the provided files."""
-        zip_filename = f"AOEngine-v{self.version}.zip"
-        zip_path = os.path.join(temp_dir, zip_filename)
-        self._log(f"Creating zip archive at: {zip_path}")
-        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-            for file_path in self.file_paths:
-                arcname = os.path.basename(file_path)
-                zipf.write(file_path, arcname=arcname)
-        self._log("Zip archive created successfully.")
-        return zip_path
+    def _create_archive(self, temp_dir: str) -> Tuple[str, List[str]]:
+        """Creates a .tar.zst archive from the provided files."""
+        version_str = f"{self.version}(Profiler)" if self.profiler else self.version
+        archive_filename = f"AOEngine-v{version_str}.tar.zst"
+        archive_path = os.path.join(temp_dir, archive_filename)
+        self._log(f"Creating archive at: {archive_path}")
 
-    def _create_manifest(self, temp_dir: str, zip_hash: str) -> str:
+        file_names = [os.path.basename(p) for p in self.file_paths]
+
+        cctx = zstd.ZstdCompressor(level=9)
+        with open(archive_path, "wb") as f, cctx.stream_writer(f) as writer:
+            with tarfile.open(fileobj=writer, mode="w|") as tar:
+                for file_path in self.file_paths:
+                    arcname = os.path.basename(file_path)
+                    tar.add(file_path, arcname=arcname)
+
+        self._log("Archive created successfully.")
+        return archive_path, file_names
+
+    def _create_manifest(self, temp_dir: str, archive_hash: str, file_names: List[str]) -> str:
         """Creates the manifest.json file."""
-        manifest_path = os.path.join(temp_dir, f"manifest-v{self.version}.json")
+        version_str = f"{self.version}(Profiler)" if self.profiler else self.version
+        manifest_path = os.path.join(temp_dir, f"manifest-v{version_str}.json")
         manifest_data = {
             "version": self.version,
             "release_notes": self.notes,
-            "zip_sha256": zip_hash,
+            "archive_sha256": archive_hash,
             "upload_date": datetime.now(timezone.utc).isoformat(),
+            "files": file_names,
+            "profiler": self.profiler,
         }
         self._log(f"Creating manifest.json at: {manifest_path}")
         with open(manifest_path, "w") as f:
@@ -68,7 +81,7 @@ class ReleaseWorkflow:
         return manifest_path
 
     def _upload_asset(
-        self, provider: AssetProvider, file_path: str, version: str, notes: str
+        self, provider: AssetProvider, file_path: str, version: str, notes: str, profiler: bool
     ) -> Tuple[str, str, str]:
         """Wrapper for uploading a single asset to a single provider."""
         provider_name = provider.get_name()
@@ -76,7 +89,7 @@ class ReleaseWorkflow:
         self._log(f"Uploading '{file_name}' to {provider_name}...")
         try:
             if provider_name == "GitHub Releases":
-                url = provider.upload_asset(file_path, version, notes)
+                url = provider.upload_asset(file_path, version, notes, profiler)
             else:
                 url = provider.upload_asset(file_path, version)
             self._log(f"Successfully uploaded '{file_name}' to {provider_name}: {url}")
@@ -94,65 +107,71 @@ class ReleaseWorkflow:
 
         try:
             # Step 1: Package & Hash
-            zip_path = self._create_zip_archive(temp_dir)
-            zip_hash = self._calculate_sha256(zip_path)
-            self._log(f"Calculated SHA256 hash for zip: {zip_hash}")
+            archive_path, file_names = self._create_archive(temp_dir)
+            archive_hash = self._calculate_sha256(archive_path)
+            self._log(f"Calculated SHA256 hash for archive: {archive_hash}")
 
             # Step 2: Generate manifest.json
-            manifest_path = self._create_manifest(temp_dir, zip_hash)
+            manifest_path = self._create_manifest(temp_dir, archive_hash, file_names)
 
             # Step 3: Parallel Asset Upload
             self._log("Starting parallel asset uploads...")
             download_urls: Dict[str, str] = {}
             manifest_urls: Dict[str, str] = {}
-            files_to_upload = [zip_path, manifest_path]
+            files_to_upload = [archive_path, manifest_path]
 
             with ThreadPoolExecutor(max_workers=len(self.asset_providers) * 2) as executor:
                 futures = [
-                    executor.submit(self._upload_asset, provider, file_path, self.version, self.notes)
+                    executor.submit(self._upload_asset, provider, file_path, self.version, self.notes, self.profiler)
                     for provider in self.asset_providers
                     for file_path in files_to_upload
                 ]
-                
+
                 for future in as_completed(futures):
                     provider_name, file_name, url = future.result()
                     if url:
-                        if file_name.endswith(".zip"):
+                        if file_name.endswith(".tar.zst"):
                             download_urls[provider_name] = url
                         elif file_name.endswith(".json"):
                             # Exclude manifest URL from GitHub Releases provider to avoid rate limits
                             if provider_name != "GitHub Releases":
                                 manifest_urls[provider_name] = url
-            
-            # The manifest from the index provider is canonical, so we only need the zip from asset providers.
+
+            # The manifest from the index provider is canonical, so we only need the archive from asset providers.
             if not download_urls:
-                raise RuntimeError("Failed to upload zip archive to any provider. Aborting.")
+                raise RuntimeError("Failed to upload archive to any provider. Aborting.")
             
             self._log("Parallel asset uploads completed.")
 
             # Step 4: Commit manifest to index repo
             self._log("Committing manifest to index repository...")
-            manifest_index_url = self.index_provider.commit_manifest_file(manifest_path, self.version)
+            manifest_index_url = self.index_provider.commit_manifest_file(
+                manifest_path, self.version, self.profiler
+            )
             self._log(f"Manifest committed to index repo: {manifest_index_url}")
-            
+
             # Step 5: Update Version Index
             self._log("Updating version index...")
             current_index = self.index_provider.get_index_content()
-            
+
             # Add the URL from the index repo to the manifest_urls dictionary
             # This makes it the canonical source, but we still track mirrors
             manifest_urls[self.index_provider.get_name()] = manifest_index_url
 
-            # Ensure no other entry is marked as latest
-            for entry in current_index:
-                entry.pop("latest", None)
+            # If this is not a profiler build, ensure no other entry is marked as latest
+            if not self.profiler:
+                for entry in current_index:
+                    entry.pop("latest", None)
 
             new_entry = {
                 "version": self.version,
                 "manifest_urls": manifest_urls,
                 "download_urls": download_urls,
-                "latest": True,
+                "profiler": self.profiler,
             }
+            # Only set 'latest' for non-profiler builds
+            if not self.profiler:
+                new_entry["latest"] = True
 
             # Add the new release to the top of the list
             current_index.insert(0, new_entry)

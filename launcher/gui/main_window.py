@@ -133,12 +133,23 @@ class App(ctk.CTk):
             if not self.latest_release and self.releases:
                 self.latest_release = self.releases[0]
 
-            # Populate version dropdown with latest at top
-            versions = [r.version for r in self.releases if not r.latest]
-            # Put latest version at the top of the list
-            versions.insert(0, self.latest_release.version)
-            self._queue_ui_update(self.version_option_menu.configure, values=versions)
-            self._queue_ui_update(self.version_option_menu.set, self.latest_release.version)
+            # Populate version dropdown
+            def get_display_name(release: ReleaseInfo) -> str:
+                return f"{release.version} (Profiler)" if release.profiler else release.version
+
+            # Set the latest release display name
+            latest_display_name = get_display_name(self.latest_release)
+
+            # Create the full list of display names
+            version_display_names = [get_display_name(r) for r in self.releases]
+            
+            # Ensure the 'latest' version is at the top of the list
+            if latest_display_name in version_display_names:
+                version_display_names.remove(latest_display_name)
+            version_display_names.insert(0, latest_display_name)
+
+            self._queue_ui_update(self.version_option_menu.configure, values=version_display_names)
+            self._queue_ui_update(self.version_option_menu.set, latest_display_name)
 
             self._refresh_installed_version()
 
@@ -164,32 +175,54 @@ class App(ctk.CTk):
         status_text = self.translator.get("status_ready_to_install")
 
         if version_file.exists():
-            with open(version_file, "r") as f:
-                local_info = json.load(f)
-            self.installed_version = local_info.get("version", "None")
-            if hasattr(self, 'latest_release') and self.latest_release and self.installed_version == self.latest_release.version:
-                status_text = self.translator.get("status_up_to_date")
-            elif hasattr(self, 'latest_release') and self.latest_release:
-                status_text = self.translator.get("status_update_available", version=self.latest_release.version)
-            self._queue_ui_update(self.action_button.configure, text=self.translator.get("action_button_update"))
+            try:
+                with open(version_file, "r") as f:
+                    local_info = json.load(f)
+                
+                # Check for profiler flag
+                version = local_info.get("version", "None")
+                is_profiler = local_info.get("profiler", False)
+                
+                self.installed_version = f"{version} (Profiler)" if is_profiler else version
+
+                # Now, compare the base version for update checks
+                latest_version_available = self.latest_release.version if hasattr(self, 'latest_release') and self.latest_release else None
+                
+                if latest_version_available and version == latest_version_available:
+                    status_text = self.translator.get("status_up_to_date")
+                elif latest_version_available:
+                    status_text = self.translator.get("status_update_available", version=latest_version_available)
+                
+                self._queue_ui_update(self.action_button.configure, text=self.translator.get("action_button_update"))
+            except (json.JSONDecodeError, KeyError) as e:
+                logging.warning(f"Could not parse version.json: {e}")
+                self.installed_version = "Unknown"
+                status_text = self.translator.get("status_ready_to_install")
+                self._queue_ui_update(self.action_button.configure, text=self.translator.get("action_button_install"))
         else:
             self.installed_version = "None"
             self._queue_ui_update(self.action_button.configure, text=self.translator.get("action_button_install"))
 
-        if hasattr(self, 'latest_release') and self.latest_release:
-            self._queue_ui_update(self.version_label.configure, text=self.translator.get("installed_label", installed_version=self.installed_version, latest_version=self.latest_release.version))
-        else:
-            self._queue_ui_update(self.version_label.configure, text=self.translator.get("installed_label_simple", installed_version=self.installed_version))
+        # Update the version label with the potentially modified (Profiler) name
+        latest_version_display = self.latest_release.version if hasattr(self, 'latest_release') and self.latest_release else "N/A"
+        self._queue_ui_update(
+            self.version_label.configure,
+            text=self.translator.get(
+                "installed_label",
+                installed_version=self.installed_version,
+                latest_version=latest_version_display
+            )
+        )
         self._queue_ui_update(self.status_label.configure, text=status_text)
 
     def _start_installation(self):
         """(Worker Thread) Runs the full installation workflow."""
         try:
-            selected_version_str = self.version_option_menu.get()
-            target_release = next((r for r in self.releases if r.version == selected_version_str), None)
+            selected_display_name = self.version_option_menu.get()
+            target_release = next((r for r in self.releases if (f"{r.version} (Profiler)" if r.profiler else r.version) == selected_display_name), None)
 
             if not target_release:
-                logging.error(f"Selected version {selected_version_str} not found in releases.")
+                logging.error(f"Selected version {selected_display_name} not found in releases.")
                 self._queue_ui_update(self.status_label.configure, text=self.translator.get("status_version_not_found"))
                 return
 
@@ -236,7 +269,7 @@ class App(ctk.CTk):
             # 3. Verify
             logging.info("Verifying file integrity...")
             self._queue_ui_update(self.status_label.configure, text=self.translator.get("status_verifying"))
-            verified = self.network_manager.verify_sha256(download_path, target_release.zip_sha256)
+            verified = self.network_manager.verify_sha256(download_path, target_release.archive_sha256)
             if not verified:
                 logging.error("Hash mismatch! Download may be corrupt.")
                 self._queue_ui_update(self.status_label.configure, text=self.translator.get("status_hash_mismatch"))
@@ -248,20 +281,18 @@ class App(ctk.CTk):
             logging.info(f"Extracting files to {bin_path}...")
             self._queue_ui_update(self.status_label.configure, text=self.translator.get("status_extracting"))
             self._queue_ui_update(self.progress_bar.set, 0)
-            self.network_manager.extract_zip(download_path, str(bin_path), progress_callback=progress_callback)
+            self.network_manager.extract_archive(download_path, str(bin_path), manifest=target_release, progress_callback=progress_callback)
             logging.info("Extraction complete.")
 
             # 5. Create version.json
             version_file_path = bin_path / "version.json"
-            # Get the canonical manifest URL
-            manifest_url = target_release.manifest_urls.get("GitHub Git", list(target_release.manifest_urls.values())[0])
             with open(version_file_path, "w") as f:
-                json.dump({"version": target_release.version, "manifest_url": manifest_url}, f, indent=4)
+                f.write(target_release.model_dump_json(indent=4, exclude={'manifest_urls', 'download_urls', 'latest'}))
             logging.info(f"Created version.json for version {target_release.version}")
 
             self._queue_ui_update(self.status_label.configure, text=self.translator.get("status_installation_complete"))
             self._queue_ui_update(self.progress_bar.set, 1)
-            self.installed_version = target_release.version
+            self.installed_version = f"{target_release.version} (Profiler)" if target_release.profiler else target_release.version
             self._queue_ui_update(self.version_label.configure, text=self.translator.get("installed_label", installed_version=self.installed_version, latest_version=self.latest_release.version))
             logging.info("Installation complete!")
 
@@ -370,9 +401,11 @@ class App(ctk.CTk):
         backup_window = BackupWindow(self, self.backup_manager)
         backup_window.grab_set()
 
-    def _on_version_select(self, selected_version: str):
+    def _on_version_select(self, selected_display_name: str):
         """Updates the release notes when a different version is selected."""
-        release = next((r for r in self.releases if r.version == selected_version), None)
+        # Find the release by its display name
+        release = next((r for r in self.releases if (f"{r.version} (Profiler)" if r.profiler else r.version) == selected_display_name), None)
+        
         if release:
             self.release_notes_textbox.configure(state="normal")
             self.release_notes_textbox.delete("1.0", "end")

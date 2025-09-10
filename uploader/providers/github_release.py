@@ -32,10 +32,16 @@ class GitHubReleaseProvider(AssetProvider):
             else:
                 raise # Re-raise other exceptions
 
-    def upload_asset(self, file_path: str, release_version: str, release_notes: str) -> str:
+    def upload_asset(self, file_path: str, release_version: str, release_notes: str, profiler: bool = False) -> str:
         logging.info(f"Uploading asset {file_path} for release {release_version}")
         self._initialize_repo()  # Ensure repo is not empty
-        tag_name = f"v{release_version}"
+        
+        version_str = f"{release_version}(Profiler)" if profiler else release_version
+        tag_name = f"v{version_str}"
+        release_name = f"Release {version_str}"
+        
+        # For profiler builds, never mark as "latest"
+        make_latest = "true" if not profiler else "false"
 
         with self._release_lock:
             # Ensure the tag exists before creating the release
@@ -59,9 +65,9 @@ class GitHubReleaseProvider(AssetProvider):
                     logging.info(f"Release not found for tag {tag_name}. Creating new release.")
                     release = self.repo.create_git_release(
                         tag=tag_name,
-                        name=f"Release {release_version}",
-                        message=f"Automated release for version {release_version}\n\n{release_notes}",
-                        make_latest="true"
+                        name=release_name,
+                        message=f"Automated release for version {version_str}\n\n{release_notes}",
+                        make_latest=make_latest
                     )
                     logging.info(f"Created new release: {release.title}")
                 else:
