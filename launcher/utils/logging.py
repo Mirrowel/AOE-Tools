@@ -2,6 +2,7 @@ import logging
 import queue
 
 log_queue = queue.Queue()
+log_history = []
 
 class QueueHandler(logging.Handler):
     """A custom logging handler that puts messages into a queue."""
@@ -10,7 +11,9 @@ class QueueHandler(logging.Handler):
         self.log_queue = log_queue
 
     def emit(self, record):
-        self.log_queue.put(self.format(record))
+        message = self.format(record)
+        log_history.append(message)
+        self.log_queue.put(message)
 
 def setup_logging():
     """Configures the root logger."""

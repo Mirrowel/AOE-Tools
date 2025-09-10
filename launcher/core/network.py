@@ -128,12 +128,15 @@ class NetworkManager:
         """
         try:
             os.makedirs(destination, exist_ok=True)
+            logging.info(f"Extracting '{zip_path}' to '{destination}'...")
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 total_files = len(zip_ref.infolist())
+                logging.info(f"Zip archive contains {total_files} files.")
                 last_progress = 0
                 step = 0.01  # Send updates every 1% progress
                 for i, member in enumerate(zip_ref.infolist()):
                     zip_ref.extract(member, destination)
+                    logging.debug(f"Extracted {member.filename}")
                     current_progress = (i + 1) / total_files
                     if progress_callback and current_progress - last_progress >= step:
                         progress_callback(current_progress)
@@ -187,16 +190,20 @@ class NetworkManager:
             # Submit all manifest downloads as futures
             futures = [executor.submit(download_manifest, version, index) for index, version in enumerate(versions)]
             future_to_index = {future: index for index, future in enumerate(futures)}
-
+    
             # Collect results as they complete
             results = []
+            logging.info(f"Downloading {len(futures)} manifests in parallel...")
             for future in concurrent.futures.as_completed(futures):
                 index = future_to_index[future]
                 index_from_result, version, manifest = future.result()
                 if manifest:
+                    logging.info(f"Successfully downloaded and parsed manifest for version {version.version}")
                     # Combine data from version and manifest using dictionary unpacking
                     release_data = {**version.model_dump(), **manifest.model_dump()}
                     results.append((index, ReleaseInfo(**release_data)))
+                else:
+                    logging.warning(f"Failed to process manifest for version {version.version}")
 
             # Sort by original index to maintain versions.json order
             results.sort(key=lambda x: x[0])

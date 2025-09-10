@@ -31,7 +31,7 @@ class NotesEditPopup(ctk.CTkToplevel):
     def __init__(self, master, current_notes, save_callback):
         super().__init__(master)
 
-        self.title("Edit Release Notes")
+        self.title("🍄 Edit Release Notes")
         self.geometry("500x400")
         self.save_callback = save_callback
 
@@ -60,7 +60,7 @@ class App(ctk.CTkToplevel):
     def __init__(self, master=None):
         super().__init__(master)
 
-        self.title("🍄 AO Uploader")
+        self.title("🍄 AOEngine Uploader")
         self.geometry("900x800")
 
         # Graceful shutdown flag

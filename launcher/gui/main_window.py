@@ -11,7 +11,7 @@ from launcher.core.config import ConfigManager
 from launcher.core.network import NetworkManager
 from launcher.core.backup import BackupManager
 from launcher.core.models import ReleaseInfo
-from launcher.utils.logging import log_queue
+from launcher.utils.logging import log_queue, log_history
 
 # Custom colors for fly agaric theme
 FLY_AGARIC_RED = "#A52A2A"
@@ -23,7 +23,7 @@ class App(ctk.CTk):
     def __init__(self, master=None):
         super().__init__(master)
 
-        self.title("AOEngine Launcher")
+        self.title("🍄 AOEngine Launcher")
         self.geometry("700x500")
 
         # Set up fly agaric theme
@@ -371,7 +371,7 @@ class BackupWindow(ctk.CTkToplevel):
         self.backup_manager = backup_manager
         self.master = master
 
-        self.title("Backup Management")
+        self.title("🍄 Backup Management")
         self.geometry("500x400")
 
         self.grid_columnconfigure(0, weight=1)
@@ -498,7 +498,7 @@ class BackupWindow(ctk.CTkToplevel):
 class ConsoleWindow(ctk.CTkToplevel):
     def __init__(self, master):
         super().__init__(master)
-        self.title("Console Log")
+        self.title("🍄 Console Log")
         self.geometry("800x400")
 
         self.grid_columnconfigure(0, weight=1)
@@ -511,6 +511,16 @@ class ConsoleWindow(ctk.CTkToplevel):
                                           border_width=2,
                                           font=("Courier New", 12))
         self.log_textbox.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+        self.log_textbox.configure(state="disabled")
+
+        self._load_history()
+
+    def _load_history(self):
+        """Loads the existing log history into the textbox."""
+        self.log_textbox.configure(state="normal")
+        for message in log_history:
+            self.log_textbox.insert("end", message + "\n")
+        self.log_textbox.see("end")
         self.log_textbox.configure(state="disabled")
 
     def log(self, message: str):
