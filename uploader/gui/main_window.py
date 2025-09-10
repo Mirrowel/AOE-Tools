@@ -16,6 +16,7 @@ from ..providers.base import AssetProvider, IndexProvider
 from ..providers.catbox import CatboxProvider
 from ..providers.github_git import GitHubGitProvider
 from ..providers.github_release import GitHubReleaseProvider
+from ..utils.logging import log_queue, log_history
 
 # Set up fly agaric theme
 ctk.set_appearance_mode("dark")
@@ -85,6 +86,9 @@ class App(ctk.CTkToplevel):
 
         # Handle window closing
         self.protocol("WM_DELETE_WINDOW", self._on_closing)
+
+        self.console_window = None
+        self.after(100, self._process_log_queue)
 
     def _configure_providers(self):
         """Instantiates all configured providers."""
@@ -218,8 +222,19 @@ class App(ctk.CTkToplevel):
         self.version_entry.pack(pady=5, padx=10, fill="x")
         self.version_entry.bind("<KeyRelease>", self._validate_inputs)
 
-        ctk.CTkLabel(metadata_frame, text="📝 Release Notes",
-                    font=ctk.CTkFont(size=14, weight="bold")).pack(pady=5, padx=10, anchor="w")
+        release_notes_frame = ctk.CTkFrame(metadata_frame, fg_color="transparent")
+        release_notes_frame.pack(fill="x", padx=10, pady=5)
+        
+        ctk.CTkLabel(release_notes_frame, text="📝 Release Notes",
+                    font=ctk.CTkFont(size=14, weight="bold")).pack(side="left")
+
+        ctk.CTkButton(release_notes_frame, text="Edit in new window",
+                     command=self._open_upload_notes_popup,
+                     fg_color=FLY_AGARIC_BLACK,
+                     hover_color=FLY_AGARIC_RED,
+                     border_color=FLY_AGARIC_RED,
+                     border_width=2).pack(side="right")
+
         self.notes_textbox = ctk.CTkTextbox(
             metadata_frame,
             height=100,
@@ -253,8 +268,19 @@ class App(ctk.CTkToplevel):
                                     border_color=FLY_AGARIC_RED, border_width=2)
         progress_frame.pack(pady=5, padx=10, fill="both", expand=True)
 
-        ctk.CTkLabel(progress_frame, text="📋 Log",
-                    font=ctk.CTkFont(size=14, weight="bold")).pack(pady=5, padx=10, anchor="w")
+        log_header_frame = ctk.CTkFrame(progress_frame, fg_color="transparent")
+        log_header_frame.pack(fill="x", padx=10, pady=5)
+
+        ctk.CTkLabel(log_header_frame, text="📋 Log",
+                    font=ctk.CTkFont(size=14, weight="bold")).pack(side="left", anchor="w")
+        
+        ctk.CTkButton(log_header_frame, text="Open in new window",
+                     command=self._open_console_window,
+                     fg_color=FLY_AGARIC_BLACK,
+                     hover_color=FLY_AGARIC_RED,
+                     border_color=FLY_AGARIC_RED,
+                     border_width=2).pack(side="right")
+
         self.feedback_textbox = ctk.CTkTextbox(
             progress_frame,
             state="disabled",
@@ -736,8 +762,31 @@ class App(ctk.CTkToplevel):
 
         toggle_buttons_in_frame(upload_tab, state)
 
+    def _open_console_window(self):
+        if self.console_window is None or not self.console_window.winfo_exists():
+            self.console_window = ConsoleWindow(self)
+        else:
+            self.console_window.focus()
+    
+    def _open_upload_notes_popup(self):
+        """Opens a popup to edit the release notes."""
+        current_notes = self.notes_textbox.get("1.0", "end-1c")
+        if current_notes.strip() == self.NOTES_PLACEHOLDER:
+            current_notes = ""
+
+        def save_callback(new_notes):
+            self.notes_textbox.delete("1.0", "end")
+            self.notes_textbox.insert("1.0", new_notes)
+            if not new_notes.strip():
+                self._on_notes_focus_out() # Restore placeholder if empty
+            else:
+                self.notes_textbox.configure(text_color=FLY_AGARIC_BLACK)
+
+        NotesEditPopup(self, current_notes, save_callback)
+
     def _log_status(self, message: str):
         """Thread-safe method to log a message to the feedback queue."""
+        logging.info(message)
         self.feedback_queue.put(message)
 
     def _process_feedback_queue(self):
@@ -759,6 +808,18 @@ class App(ctk.CTkToplevel):
             pass
         finally:
             self.after(100, self._process_feedback_queue)
+
+    def _process_log_queue(self):
+        """Processes messages from the logging queue to update the console."""
+        try:
+            while not log_queue.empty():
+                message = log_queue.get_nowait()
+                if self.console_window and self.console_window.winfo_exists():
+                    self.console_window.log(message)
+        except queue.Empty:
+            pass
+        finally:
+            self.after(100, self._process_log_queue)
 
     def _on_closing(self):
         """Handle the window closing event."""
@@ -1033,3 +1094,39 @@ class App(ctk.CTkToplevel):
         except Exception as e:
             logging.error(f"Failed to save changes: {e}", exc_info=True)
             self._log_status(f"ERROR: Failed to save changes: {e}")
+
+
+class ConsoleWindow(ctk.CTkToplevel):
+    def __init__(self, master):
+        super().__init__(master)
+        self.title("Console Log")
+        self.geometry("800x400")
+
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(0, weight=1)
+
+        self.log_textbox = ctk.CTkTextbox(self, wrap="word",
+                                          fg_color=FLY_AGARIC_BLACK,
+                                          text_color=FLY_AGARIC_WHITE,
+                                          border_color=FLY_AGARIC_RED,
+                                          border_width=2,
+                                          font=("Courier New", 12))
+        self.log_textbox.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+        self.log_textbox.configure(state="disabled")
+
+        self._load_history()
+
+    def _load_history(self):
+        """Loads the existing log history into the textbox."""
+        self.log_textbox.configure(state="normal")
+        for message in log_history:
+            self.log_textbox.insert("end", message + "\n")
+        self.log_textbox.see("end")
+        self.log_textbox.configure(state="disabled")
+
+    def log(self, message: str):
+        """Appends a message to the log display."""
+        self.log_textbox.configure(state="normal")
+        self.log_textbox.insert("end", message + "\n")
+        self.log_textbox.see("end") # Scroll to the end
+        self.log_textbox.configure(state="disabled")

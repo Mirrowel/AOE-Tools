@@ -6,3 +6,4 @@ GitPython
 python-dotenv
 packaging
 tkinterdnd2
+pydantic

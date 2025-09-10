@@ -1,9 +1,10 @@
 import logging
 from tkinterdnd2 import TkinterDnD
 from .gui.main_window import App
+from .utils.logging import setup_logging
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
+    setup_logging()
 
     # Create tkinterdnd2-aware root window (hidden - it's just for enabling dnd)
     root = TkinterDnD.Tk()
