@@ -6,5 +6,5 @@ def main():
     app = App()
     app.mainloop()
 
-if __name__ == "__main__":
-    main()
+# This block is removed to prevent execution when imported.
+# The entry point is now handled by the runner script.

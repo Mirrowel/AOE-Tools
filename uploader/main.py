@@ -3,7 +3,7 @@ from tkinterdnd2 import TkinterDnD
 from .gui.main_window import App
 from .utils.logging import setup_logging
 
-if __name__ == "__main__":
+def main():
     setup_logging()
 
     # Create tkinterdnd2-aware root window (hidden - it's just for enabling dnd)
