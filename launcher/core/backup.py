@@ -16,7 +16,7 @@ class BackupManager:
             game_path: The path to the user's game directory.
         """
         self.game_path = game_path
-        self.backup_root = os.path.join(self.game_path, "launcher_backups")
+        self.backup_root = os.path.join(self.game_path, "AOEngine backups")
         self.bin_path = os.path.join(self.game_path, "bin")
         os.makedirs(self.backup_root, exist_ok=True)
 

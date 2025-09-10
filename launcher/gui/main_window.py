@@ -171,7 +171,7 @@ class App(ctk.CTk):
             return
 
         game_path = Path(game_path_str)
-        version_file = game_path / "bin" / "version.json"
+        version_file = game_path / "bin" / "AOEngine.meta.json"
         status_text = self.translator.get("status_ready_to_install")
 
         if version_file.exists():
@@ -195,7 +195,7 @@ class App(ctk.CTk):
                 
                 self._queue_ui_update(self.action_button.configure, text=self.translator.get("action_button_update"))
             except (json.JSONDecodeError, KeyError) as e:
-                logging.warning(f"Could not parse version.json: {e}")
+                logging.warning(f"Could not parse AOEngine.meta.json: {e}")
                 self.installed_version = "Unknown"
                 status_text = self.translator.get("status_ready_to_install")
                 self._queue_ui_update(self.action_button.configure, text=self.translator.get("action_button_install"))
@@ -242,7 +242,11 @@ class App(ctk.CTk):
             self._queue_ui_update(self.status_label.configure, text=self.translator.get("status_backing_up"))
             self._queue_ui_update(self.progress_bar.set, 0)
             backup_version = self.installed_version if self.installed_version != "None" else "initial"
-            files_to_backup = target_release.files if self.installed_version != "None" else None
+            if self.installed_version != "None":
+                files_to_backup = target_release.files.copy()
+                files_to_backup.append("AOEngine.meta.json")
+            else:
+                files_to_backup = None
             self.backup_manager.create_backup(version=backup_version, files_to_backup=files_to_backup, progress_callback=progress_callback)
             logging.info("Backup complete.")
 
@@ -285,11 +289,11 @@ class App(ctk.CTk):
             self.network_manager.extract_archive(download_path, str(bin_path), manifest=target_release, progress_callback=progress_callback)
             logging.info("Extraction complete.")
 
-            # 5. Create version.json
-            version_file_path = bin_path / "version.json"
+            # 5. Create AOEngine.meta.json
+            version_file_path = bin_path / "AOEngine.meta.json"
             with open(version_file_path, "w") as f:
                 f.write(target_release.model_dump_json(indent=4, exclude={'manifest_urls', 'download_urls', 'latest'}))
-            logging.info(f"Created version.json for version {target_release.version}")
+            logging.info(f"Created AOEngine.meta.json for version {target_release.version}")
 
             self._queue_ui_update(self.status_label.configure, text=self.translator.get("status_installation_complete"))
             self._queue_ui_update(self.progress_bar.set, 1)
