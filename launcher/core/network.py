@@ -5,6 +5,7 @@ import requests
 import os
 import concurrent.futures
 import logging
+import time
 from typing import List, Dict, Optional, Callable
 
 from launcher.core.models import Version, Manifest, ReleaseInfo
@@ -44,53 +45,67 @@ class NetworkManager:
         urls: Dict[str, str],
         progress_callback: Optional[Callable[[float], None]] = None,
         status_callback: Optional[Callable[[str], None]] = None,
+        is_manifest: bool = False
     ) -> Optional[str]:
         """
-        Attempts to download a file from a dictionary of URLs with fallback.
+        Attempts to download a file from a dictionary of URLs with fallback and retries.
         Creates a temporary file to store the download.
 
         Args:
             urls: A dictionary of URLs to try.
             progress_callback: An optional function to call with progress fraction.
+            status_callback: An optional function for status updates.
+            is_manifest: A flag to indicate if the file is a manifest.
 
         Returns:
             The path to the downloaded file on success, None otherwise.
         """
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".zip" if not is_manifest else ".json")
         destination = temp_file.name
         temp_file.close()
 
-        for provider, url in urls.items():
-            try:
-                logging.info(f"Attempting to download from {provider} ({url})...")
-                if status_callback:
-                    status_callback(f"Trying {provider}...")
-                with requests.get(url, stream=True, timeout=10) as response:
-                    response.raise_for_status()
-                    total_size = int(response.headers.get("content-length", 0))
-                    bytes_downloaded = 0
-                    last_progress = 0
-                    step = 0.01  # Send updates every 1% progress
-                    with open(destination, "wb") as f:
-                        for chunk in response.iter_content(chunk_size=8192):
-                            f.write(chunk)
-                            bytes_downloaded += len(chunk)
-                            if progress_callback and total_size > 0:
-                                current_progress = bytes_downloaded / total_size
-                                if current_progress - last_progress >= step:
-                                    progress_callback(current_progress)
-                                    last_progress = current_progress
-                        # Send final 100% update
-                        if progress_callback and total_size > 0:
-                            progress_callback(1.0)
-                logging.info("Download successful.")
-                return destination
-            except requests.RequestException as e:
-                logging.error(f"Failed to download from {url}: {e}")
-                if status_callback:
-                    status_callback(f"{provider} failed. Trying next mirror...")
-                continue
-        
+        sorted_urls = self._get_sorted_urls(urls)
+
+        for provider, url in sorted_urls:
+            attempt = 0
+            max_retries = 3
+            while attempt < max_retries:
+                try:
+                    logging.info(f"Attempting to download from {provider} ({url}), attempt {attempt + 1}/{max_retries}...")
+                    if status_callback:
+                        status_callback(f"Trying {provider} (attempt {attempt + 1})...")
+                    
+                    with requests.get(url, stream=True, timeout=10) as response:
+                        response.raise_for_status()
+                        total_size = int(response.headers.get("content-length", 0))
+                        bytes_downloaded = 0
+                        last_progress = 0
+                        step = 0.01  # Send updates every 1% progress
+                        with open(destination, "wb") as f:
+                            for chunk in response.iter_content(chunk_size=8192):
+                                f.write(chunk)
+                                bytes_downloaded += len(chunk)
+                                if progress_callback and total_size > 0:
+                                    current_progress = bytes_downloaded / total_size
+                                    if current_progress - last_progress >= step:
+                                        progress_callback(current_progress)
+                                        last_progress = current_progress
+                        
+                        if progress_callback:
+                            progress_callback(1.0) # Ensure 100% is reported
+                    
+                    logging.info("Download successful.")
+                    return destination
+                except requests.RequestException as e:
+                    logging.error(f"Failed to download from {url} on attempt {attempt + 1}: {e}")
+                    attempt += 1
+                    if attempt < max_retries:
+                        time.sleep(3) # Wait 3 seconds before retrying
+                    else:
+                        if status_callback:
+                            status_callback(f"{provider} failed after {max_retries} attempts. Trying next mirror...")
+                        break # Move to the next provider
+
         os.remove(destination)
         logging.error("All download URLs failed.")
         return None
@@ -150,12 +165,24 @@ class NetworkManager:
         except IOError as e:
             logging.error(f"Error reading or writing file: {e}")
 
+    def _get_sorted_urls(self, urls: Dict[str, str]) -> List[tuple[str, str]]:
+        """Sorts URLs to prioritize 'GitHub Git'."""
+        sorted_urls = []
+        if "GitHub Git" in urls:
+            sorted_urls.append(("GitHub Git", urls["GitHub Git"]))
+            for provider, url in urls.items():
+                if provider != "GitHub Git":
+                    sorted_urls.append((provider, url))
+        else:
+            sorted_urls = list(urls.items())
+        return sorted_urls
+
     def fetch_manifest(self, version: Version) -> Optional[Manifest]:
         """
         Downloads and parses the manifest for a given version.
         """
         logging.info(f"Fetching manifest for version {version.version}")
-        downloaded_path = self.download_file_with_fallback(version.manifest_urls)
+        downloaded_path = self.download_file_with_fallback(version.manifest_urls, is_manifest=True)
         if downloaded_path:
             try:
                 with open(downloaded_path, "r") as f:
