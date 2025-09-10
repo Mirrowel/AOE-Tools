@@ -242,7 +242,8 @@ class App(ctk.CTk):
             self._queue_ui_update(self.status_label.configure, text=self.translator.get("status_backing_up"))
             self._queue_ui_update(self.progress_bar.set, 0)
             backup_version = self.installed_version if self.installed_version != "None" else "initial"
-            self.backup_manager.create_backup(version=backup_version, progress_callback=progress_callback)
+            files_to_backup = target_release.files if self.installed_version != "None" else None
+            self.backup_manager.create_backup(version=backup_version, files_to_backup=files_to_backup, progress_callback=progress_callback)
             logging.info("Backup complete.")
 
             # 2. Download

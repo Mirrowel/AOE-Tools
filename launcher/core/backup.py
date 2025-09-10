@@ -4,7 +4,7 @@ import shutil
 import tarfile
 import zstandard as zstd
 from datetime import datetime
-from typing import Callable, Optional
+from typing import Callable, Optional, List
 
 class BackupManager:
     """Manages backup and restore operations for the game files."""
@@ -20,12 +20,13 @@ class BackupManager:
         self.bin_path = os.path.join(self.game_path, "bin")
         os.makedirs(self.backup_root, exist_ok=True)
 
-    def create_backup(self, version: str = "initial", progress_callback: Optional[Callable[[float], None]] = None):
+    def create_backup(self, version: str = "initial", files_to_backup: Optional[List[str]] = None, progress_callback: Optional[Callable[[float], None]] = None):
         """
-        Creates a zstandard-compressed tar backup of the 'bin' directory
+        Creates a zstandard-compressed tar backup of specified files or the entire 'bin' directory
         and an accompanying metadata file.
         Args:
             version: The version to associate with the backup.
+            files_to_backup: A list of specific file paths to back up. If None, the entire 'bin' directory is backed up.
             progress_callback: An optional function to call with progress fraction.
         """
         if version == "initial":
@@ -43,7 +44,11 @@ class BackupManager:
 
         try:
             root = self.bin_path
-            file_paths = [os.path.join(dp, f) for dp, dn, fn in os.walk(root) for f in fn]
+            if files_to_backup:
+                file_paths = [os.path.join(self.bin_path, f) for f in files_to_backup if os.path.exists(os.path.join(self.bin_path, f))]
+            else:
+                file_paths = [os.path.join(dp, f) for dp, dn, fn in os.walk(root) for f in fn]
+            
             total_files = len(file_paths)
 
             # Create metadata file
