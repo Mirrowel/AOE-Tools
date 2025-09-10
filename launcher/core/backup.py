@@ -43,13 +43,20 @@ class BackupManager:
                 for dirpath, _, filenames in os.walk(root):
                     for filename in filenames:
                         file_paths.append(os.path.join(dirpath, filename))
-                
+
                 total_files = len(file_paths)
+                last_progress = 0
+                step = 0.01  # Send updates every 1% progress
                 for i, file_path in enumerate(file_paths):
                     arcname = os.path.relpath(file_path, root)
                     zipf.write(file_path, arcname)
-                    if progress_callback:
-                        progress_callback((i + 1) / total_files)
+                    current_progress = (i + 1) / total_files
+                    if progress_callback and current_progress - last_progress >= step:
+                        progress_callback(current_progress)
+                        last_progress = current_progress
+                # Send final 100% update
+                if progress_callback:
+                    progress_callback(1.0)
 
         except IOError as e:
             print(f"Error creating backup: {e}")
@@ -84,10 +91,17 @@ class BackupManager:
             
             with zipfile.ZipFile(backup_path, 'r') as zip_ref:
                 total_files = len(zip_ref.infolist())
+                last_progress = 0
+                step = 0.01  # Send updates every 1% progress
                 for i, member in enumerate(zip_ref.infolist()):
                     zip_ref.extract(member, self.bin_path)
-                    if progress_callback:
-                        progress_callback((i + 1) / total_files)
+                    current_progress = (i + 1) / total_files
+                    if progress_callback and current_progress - last_progress >= step:
+                        progress_callback(current_progress)
+                        last_progress = current_progress
+                # Send final 100% update
+                if progress_callback:
+                    progress_callback(1.0)
 
         except IOError as e:
             print(f"Error restoring backup: {e}")

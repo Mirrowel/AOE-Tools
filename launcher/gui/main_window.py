@@ -76,18 +76,18 @@ class App(ctk.CTk):
 
     def _process_gui_queue(self):
         """Processes messages from other threads to update the GUI safely."""
+        processed = 0
+        max_per_call = 50  # Allow more messages for responsive progress updates
         try:
-            while True:
-                # Get a callback and its arguments from the queue
+            while not self.gui_queue.empty() and processed < max_per_call:
                 callback, args, kwargs = self.gui_queue.get_nowait()
-                # Execute the callback with its arguments
                 callback(*args, **kwargs)
+                processed += 1
         except queue.Empty:
-            # The queue is empty, do nothing
             pass
         finally:
-            # Schedule the next check
-            self.after(100, self._process_gui_queue)
+            # More frequent processing for better responsiveness
+            self.after(10, self._process_gui_queue)
 
     def _queue_ui_update(self, callback, *args, **kwargs):
         """A thread-safe way to queue a GUI update."""
@@ -193,11 +193,11 @@ class App(ctk.CTk):
 
             # 3. Verify
             self._queue_ui_update(self.status_label.configure, text="Verifying file integrity...")
-            self._queue_ui_update(self.progress_bar.set, 0) # Reset for verification
             verified = self.network_manager.verify_sha256(download_path, target_release.zip_sha256)
             if not verified:
                 self._queue_ui_update(self.status_label.configure, text="Hash mismatch! Download may be corrupt.")
                 return
+            self._queue_ui_update(self.progress_bar.set, 1) # File verification complete
 
             # 4. Extract
             self._queue_ui_update(self.status_label.configure, text="Extracting files...")

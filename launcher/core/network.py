@@ -61,16 +61,24 @@ class NetworkManager:
                 print(f"Attempting to download from {provider} ({url})...")
                 if status_callback:
                     status_callback(f"Trying {provider}...")
-                with requests.get(url, stream=True) as response:
+                with requests.get(url, stream=True, timeout=10) as response:
                     response.raise_for_status()
                     total_size = int(response.headers.get("content-length", 0))
                     bytes_downloaded = 0
+                    last_progress = 0
+                    step = 0.01  # Send updates every 1% progress
                     with open(destination, "wb") as f:
                         for chunk in response.iter_content(chunk_size=8192):
                             f.write(chunk)
                             bytes_downloaded += len(chunk)
                             if progress_callback and total_size > 0:
-                                progress_callback(bytes_downloaded / total_size)
+                                current_progress = bytes_downloaded / total_size
+                                if current_progress - last_progress >= step:
+                                    progress_callback(current_progress)
+                                    last_progress = current_progress
+                        # Send final 100% update
+                        if progress_callback and total_size > 0:
+                            progress_callback(1.0)
                 print("Download successful.")
                 return destination
             except requests.RequestException as e:
@@ -109,10 +117,17 @@ class NetworkManager:
             os.makedirs(destination, exist_ok=True)
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 total_files = len(zip_ref.infolist())
+                last_progress = 0
+                step = 0.01  # Send updates every 1% progress
                 for i, member in enumerate(zip_ref.infolist()):
                     zip_ref.extract(member, destination)
-                    if progress_callback:
-                        progress_callback((i + 1) / total_files)
+                    current_progress = (i + 1) / total_files
+                    if progress_callback and current_progress - last_progress >= step:
+                        progress_callback(current_progress)
+                        last_progress = current_progress
+                # Send final 100% update
+                if progress_callback:
+                    progress_callback(1.0)
             print(f"Successfully extracted {zip_path} to {destination}")
         except zipfile.BadZipFile:
             print(f"Error: The file {zip_path} is not a valid zip file or is corrupted.")
