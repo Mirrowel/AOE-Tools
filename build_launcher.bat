@@ -3,6 +3,7 @@ REM Build the launcher executable (Simplified)
 echo Building the launcher executable...
 python -m PyInstaller ^
 --onefile ^
+--icon "icon.ico" ^
 --noconsole ^
 --name launcher ^
 --paths "." ^
@@ -13,6 +14,7 @@ python -m PyInstaller ^
 --hidden-import=requests ^
 --hidden-import=tkinterdnd2 ^
 --add-data "launcher/locale;launcher/locale" ^
+--add-data "launcher/assets;launcher/assets" ^
 run_launcher_main.py
 
 pause

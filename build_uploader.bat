@@ -3,6 +3,7 @@ REM Build the uploader executable (Simplified)
 echo Building the uploader executable...
 python -m PyInstaller ^
 --onefile ^
+--icon "icon.ico" ^
 --noconsole ^
 --name uploader ^
 --paths "." ^
@@ -18,6 +19,7 @@ python -m PyInstaller ^
 --collect-data customtkinter ^
 --collect-data tkinterdnd2 ^
 --add-data "uploader/locale;uploader/locale" ^
+--add-data "uploader/assets;uploader/assets" ^
 run_uploader_main.py
 
 pause
