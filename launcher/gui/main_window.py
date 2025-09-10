@@ -387,7 +387,20 @@ class App(ctk.CTk):
         """Sets the language and updates the UI."""
         self.translator.set_language(language)
         self.config_manager.update_config(language=language)
-        self._update_ui_text()
+
+        # Retranslate static UI elements
+        self.title(self.translator.get("app_title"))
+        self.backup_button.configure(text=self.translator.get("backup_button"))
+        self.console_button.configure(text=self.translator.get("console_button"))
+        if hasattr(self, "language_label"):
+            self.language_label.configure(text=self.translator.get("language_switcher_label"))
+
+        # Refresh dynamic UI elements using existing state-aware logic
+        self._refresh_installed_version()
+        
+        # Refresh release notes if releases are loaded
+        if self.releases:
+            self._on_version_select(self.version_option_menu.get())
 
     def _update_ui_text(self):
         """Updates all text in the UI to the current language."""
