@@ -3,6 +3,7 @@ import tempfile
 import zipfile
 import requests
 import os
+import concurrent.futures
 from typing import List, Dict, Optional, Callable
 
 from launcher.core.models import Version, Manifest, ReleaseInfo
@@ -155,13 +156,36 @@ class NetworkManager:
         """
         Fetches all versions and their corresponding manifests, returning a list
         of combined ReleaseInfo objects.
+        Downloads manifests in parallel for better performance.
+        Releases are returned in the same order as in versions.json.
         """
-        releases = []
         versions = self.fetch_versions()
-        for version in versions:
+        if not versions:
+            return []
+
+        # Download manifests in parallel while preserving order
+        def download_manifest(version, index):
             manifest = self.fetch_manifest(version)
-            if manifest:
-                # Combine data from version and manifest using dictionary unpacking
-                release_data = {**version.model_dump(), **manifest.model_dump()}
-                releases.append(ReleaseInfo(**release_data))
+            return index, version, manifest
+
+        releases = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(versions), 10)) as executor:
+            # Submit all manifest downloads as futures
+            futures = [executor.submit(download_manifest, version, index) for index, version in enumerate(versions)]
+            future_to_index = {future: index for index, future in enumerate(futures)}
+
+            # Collect results as they complete
+            results = []
+            for future in concurrent.futures.as_completed(futures):
+                index = future_to_index[future]
+                index_from_result, version, manifest = future.result()
+                if manifest:
+                    # Combine data from version and manifest using dictionary unpacking
+                    release_data = {**version.model_dump(), **manifest.model_dump()}
+                    results.append((index, ReleaseInfo(**release_data)))
+
+            # Sort by original index to maintain versions.json order
+            results.sort(key=lambda x: x[0])
+            releases = [release for _, release in results]
+
         return releases

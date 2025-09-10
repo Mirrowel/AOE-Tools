@@ -107,38 +107,16 @@ class App(ctk.CTk):
             self.latest_release = next((r for r in self.releases if r.latest), None)
             if not self.latest_release and self.releases:
                 self.latest_release = self.releases[0]
-            
-            # Populate version dropdown
-            versions = [r.version for r in self.releases]
+
+            # Populate version dropdown with latest at top
+            versions = [r.version for r in self.releases if not r.latest]
+            # Put latest version at the top of the list
+            versions.insert(0, self.latest_release.version)
             self._queue_ui_update(self.version_option_menu.configure, values=versions)
             self._queue_ui_update(self.version_option_menu.set, self.latest_release.version)
 
-            # Check for local version
-            game_path_str = self.config_manager.get_config().game_path
-            if not game_path_str:
-                # This case should ideally not be reached if the initial prompt works
-                self._queue_ui_update(self.status_label.configure, text="Game path not set.")
-                return
-            game_path = Path(game_path_str)
-            version_file = game_path / "bin" / "version.json"
-            status_text = "Ready to install."
+            self._refresh_installed_version()
 
-            if version_file.exists():
-                with open(version_file, "r") as f:
-                    local_info = json.load(f)
-                self.installed_version = local_info.get("version", "None")
-                if self.installed_version == self.latest_release.version:
-                    status_text = "Game is up to date."
-                else:
-                    status_text = f"Update to {self.latest_release.version} available!"
-                self._queue_ui_update(self.action_button.configure, text="Update")
-            else:
-                self.installed_version = "None"
-                self._queue_ui_update(self.action_button.configure, text="Install")
-
-            self._queue_ui_update(self.version_label.configure, text=f"Installed: {self.installed_version} | Latest: {self.latest_release.version}")
-            self._queue_ui_update(self.status_label.configure, text=status_text)
-            
             # Update release notes
             self._queue_ui_update(self.release_notes_textbox.configure, state="normal")
             self._queue_ui_update(self.release_notes_textbox.delete, "1.0", "end")
@@ -147,6 +125,36 @@ class App(ctk.CTk):
 
         except Exception as e:
             self._queue_ui_update(self.status_label.configure, text=f"Error: {e}")
+
+    def _refresh_installed_version(self):
+        """Refreshes the installed version detection and updates the UI accordingly."""
+        game_path_str = self.config_manager.get_config().game_path
+        if not game_path_str:
+            self._queue_ui_update(self.status_label.configure, text="Game path not set.")
+            return
+
+        game_path = Path(game_path_str)
+        version_file = game_path / "bin" / "version.json"
+        status_text = "Ready to install."
+
+        if version_file.exists():
+            with open(version_file, "r") as f:
+                local_info = json.load(f)
+            self.installed_version = local_info.get("version", "None")
+            if hasattr(self, 'latest_release') and self.latest_release and self.installed_version == self.latest_release.version:
+                status_text = "Game is up to date."
+            elif hasattr(self, 'latest_release') and self.latest_release:
+                status_text = f"Update to {self.latest_release.version} available!"
+            self._queue_ui_update(self.action_button.configure, text="Update")
+        else:
+            self.installed_version = "None"
+            self._queue_ui_update(self.action_button.configure, text="Install")
+
+        if hasattr(self, 'latest_release') and self.latest_release:
+            self._queue_ui_update(self.version_label.configure, text=f"Installed: {self.installed_version} | Latest: {self.latest_release.version}")
+        else:
+            self._queue_ui_update(self.version_label.configure, text=f"Installed: {self.installed_version}")
+        self._queue_ui_update(self.status_label.configure, text=status_text)
 
     def _start_installation(self):
         """(Worker Thread) Runs the full installation workflow."""
@@ -418,6 +426,8 @@ class BackupWindow(ctk.CTkToplevel):
         """(Worker Thread) Performs the restore operation."""
         try:
             self.backup_manager.restore_backup(backup_name, progress_callback=progress_callback)
+            # Refresh the main window's installed version after successful restore
+            self.master._refresh_installed_version()
             self.master._queue_ui_update(self.status_label.configure, text=f"Successfully restored {backup_name}.")
         except Exception as e:
             self.master._queue_ui_update(self.status_label.configure, text=f"Error restoring backup: {e}")
