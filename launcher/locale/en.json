@@ -49,5 +49,11 @@
     "status_refresh_in_progress": "A refresh is already in progress.",
     "status_release_info_updated": "Release information updated.",
     "error_failed_to_fetch": "ERROR: Failed to fetch release index: {error}",
-    "error_failed_to_save": "ERROR: Failed to save changes: {error}"
+    "error_failed_to_save": "ERROR: Failed to save changes: {error}",
+    "info_button": "Info",
+    "info_window_title": "🍄 About AOEngine Launcher",
+    "launcher_description": "A tool for managing and updating 🍄 AOEngine installations.",
+    "creator_label": "Creator",
+    "github_link_label": "GitHub: Mirrowel",
+    "discord_link_label": "Discord: 🍄 AOEngine Project"
 }

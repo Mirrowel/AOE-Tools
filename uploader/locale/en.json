@@ -6,6 +6,7 @@
     "upload_tab": "Upload",
     "manage_releases_tab": "Manage Releases",
     "settings_tab": "Settings",
+    "info_tab": "Info",
     "asset_providers_label": "🍄 Asset Providers",
     "files_to_upload_label": "📁 Files to Upload",
     "browse_files_button": "Browse Files",
@@ -58,5 +59,9 @@
     "status_release_info_updated": "Release information updated.",
     "error_failed_to_save": "ERROR: Failed to save changes: {error}",
     "catbox_anonymous_upload_text": "Anonymous upload",
-    "catbox_user_hash_placeholder": "Leave empty for anonymous uploads"
+    "catbox_user_hash_placeholder": "Leave empty for anonymous uploads",
+    "uploader_description": "A tool for uploading and managing 🍄 AOEngine releases.",
+    "creator_label": "Creator",
+    "github_link_label": "GitHub: Mirrowel",
+    "discord_link_label": "Discord: 🍄 AOEngine Project"
 }

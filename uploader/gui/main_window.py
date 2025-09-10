@@ -125,6 +125,7 @@ class App(ctk.CTkToplevel):
         self.tabview.add("upload")
         self.tabview.add("manage_releases")
         self.tabview.add("settings")
+        self.tabview.add("info")
 
         # Apply custom styling to tabs
         self.tabview.configure(fg_color=FLY_AGARIC_BLACK,
@@ -139,6 +140,9 @@ class App(ctk.CTkToplevel):
 
         # Set up Settings tab
         self._create_settings_tab()
+
+        # Set up Info tab
+        self._create_info_tab()
 
     def _create_upload_tab(self):
         """Creates the upload tab with all main functionality."""
@@ -556,6 +560,40 @@ class App(ctk.CTkToplevel):
         )
         self.load_settings_button.pack(side="right", padx=5)
 
+    def _create_info_tab(self):
+        """Creates the info tab with application details."""
+        info_tab = self.tabview.tab("info")
+
+        # Create a scrollable frame to contain all settings widgets
+        scrollable_frame = ctk.CTkScrollableFrame(info_tab, fg_color="transparent")
+        scrollable_frame.pack(fill="both", expand=True, padx=5, pady=5)
+
+        main_frame = ctk.CTkFrame(scrollable_frame, fg_color=FLY_AGARIC_BLACK,
+                                  border_color=FLY_AGARIC_RED, border_width=2)
+        main_frame.pack(pady=10, padx=10, fill="x")
+        main_frame.grid_columnconfigure(0, weight=1)
+
+        # App Description
+        self.uploader_description_label = ctk.CTkLabel(main_frame, text=self.translator.get("uploader_description"), wraplength=780, justify="left")
+        self.uploader_description_label.grid(row=0, column=0, padx=15, pady=10, sticky="ew")
+
+        # Creator Info
+        self.creator_label = ctk.CTkLabel(main_frame, text=f"{self.translator.get('creator_label')}: Mirrowel", justify="left")
+        self.creator_label.grid(row=1, column=0, padx=15, pady=5, sticky="ew")
+
+        # GitHub Link
+        self.github_link = ctk.CTkLabel(main_frame, text=self.translator.get('github_link_label'), text_color="#6495ED", cursor="hand2")
+        self.github_link.grid(row=2, column=0, padx=15, pady=5, sticky="ew")
+        self.github_link.bind("<Button-1>", lambda e: self._open_link("https://github.com/Mirrowel"))
+
+        # Discord Link
+        self.discord_link = ctk.CTkLabel(main_frame, text=self.translator.get('discord_link_label'), text_color="#7289DA", cursor="hand2")
+        self.discord_link.grid(row=3, column=0, padx=15, pady=5, sticky="ew")
+        self.discord_link.bind("<Button-1>", lambda e: self._open_link("https://discord.gg/8MY5gn3gRC"))
+
+    def _open_link(self, url):
+        import webbrowser
+        webbrowser.open_new(url)
 
     def _toggle_token_fields(self):
         """Show/hide separate token fields based on checkbox."""
@@ -1195,12 +1233,15 @@ class App(ctk.CTkToplevel):
                 buttons["manage_releases"].configure(text=self.translator.get("manage_releases_tab"))
             if "settings" in buttons:
                 buttons["settings"].configure(text=self.translator.get("settings_tab"))
+            if "info" in buttons:
+                buttons["info"].configure(text=self.translator.get("info_tab"))
         except (AttributeError, KeyError) as e:
             logging.warning(f"Could not update tab names: {e}")
 
         self._update_upload_tab_text()
         self._update_manage_releases_tab_text()
         self._update_settings_tab_text()
+        self._update_info_tab_text()
 
     def _update_upload_tab_text(self):
         self.provider_frame_label.configure(text=self.translator.get("asset_providers_label"))
@@ -1285,6 +1326,17 @@ class App(ctk.CTkToplevel):
         if hasattr(self, 'language_label'):
             self.language_label.configure(text=self.translator.get("language_switcher_label"))
         if hasattr(self, 'settings_widgets') and 'catbox_user_hash' in self.settings_widgets: self.settings_widgets['catbox_user_hash'].configure(placeholder_text=self.translator.get("catbox_user_hash_placeholder"))
+
+    def _update_info_tab_text(self):
+        """Updates all text in the info tab to the current language."""
+        if hasattr(self, 'uploader_description_label'):
+            self.uploader_description_label.configure(text=self.translator.get("uploader_description"))
+        if hasattr(self, 'creator_label'):
+            self.creator_label.configure(text=f"{self.translator.get('creator_label')}: Mirrowel")
+        if hasattr(self, 'github_link'):
+            self.github_link.configure(text=self.translator.get('github_link_label'))
+        if hasattr(self, 'discord_link'):
+            self.discord_link.configure(text=self.translator.get('discord_link_label'))
 
 
 class ConsoleWindow(ctk.CTkToplevel):

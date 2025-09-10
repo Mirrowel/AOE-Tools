@@ -372,13 +372,24 @@ class App(ctk.CTk):
                                            text_color=FLY_AGARIC_WHITE)
         self.backup_button.grid(row=5, column=0, pady=10, padx=10, sticky="ew")
 
-        # --- Console Window ---
-        self.console_button = ctk.CTkButton(main_frame, text="",
+        # --- Button Frame ---
+        button_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        button_frame.grid(row=6, column=0, pady=10, padx=10, sticky="ew")
+        button_frame.grid_columnconfigure((0, 1), weight=1)
+
+        self.console_button = ctk.CTkButton(button_frame, text="",
                                            command=self._open_console_window,
                                            fg_color=FLY_AGARIC_RED,
                                            hover_color=FLY_AGARIC_WHITE,
                                            text_color=FLY_AGARIC_WHITE)
-        self.console_button.grid(row=6, column=0, pady=10, padx=10, sticky="ew")
+        self.console_button.grid(row=0, column=0, sticky="ew", padx=(0, 5))
+
+        self.info_button = ctk.CTkButton(button_frame, text="",
+                                           command=self._open_info_window,
+                                           fg_color=FLY_AGARIC_RED,
+                                           hover_color=FLY_AGARIC_WHITE,
+                                           text_color=FLY_AGARIC_WHITE)
+        self.info_button.grid(row=0, column=1, sticky="ew", padx=(5, 0))
 
         # --- Language Switcher ---
         language_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
@@ -406,6 +417,14 @@ class App(ctk.CTk):
         backup_window = BackupWindow(self, self.backup_manager)
         backup_window.grab_set()
 
+    def _open_info_window(self):
+        info_window = InfoWindow(
+            self,
+            title=self.translator.get("info_window_title"),
+            description=self.translator.get("launcher_description")
+        )
+        info_window.grab_set()
+
     def _on_version_select(self, selected_display_name: str):
         """Updates the release notes when a different version is selected."""
         # Find the release by its display name
@@ -430,6 +449,7 @@ class App(ctk.CTk):
         self.title(self.translator.get("app_title"))
         self.backup_button.configure(text=self.translator.get("backup_button"))
         self.console_button.configure(text=self.translator.get("console_button"))
+        self.info_button.configure(text=self.translator.get("info_button"))
         if hasattr(self, "language_label"):
             self.language_label.configure(text=self.translator.get("language_switcher_label"))
 
@@ -455,6 +475,7 @@ class App(ctk.CTk):
 
         self.backup_button.configure(text=self.translator.get("backup_button"))
         self.console_button.configure(text=self.translator.get("console_button"))
+        self.info_button.configure(text=self.translator.get("info_button"))
         
         # This will be updated with real versions later
         installed = self.installed_version if self.installed_version else "None"
@@ -629,3 +650,41 @@ class ConsoleWindow(ctk.CTkToplevel):
         self.log_textbox.insert("end", message + "\n")
         self.log_textbox.see("end") # Scroll to the end
         self.log_textbox.configure(state="disabled")
+
+class InfoWindow(ctk.CTkToplevel):
+    def __init__(self, master, title, description):
+        super().__init__(master)
+        self.title(title)
+        self.geometry("400x250")
+
+        self.grid_columnconfigure(0, weight=1)
+
+        main_frame = ctk.CTkFrame(self, fg_color=FLY_AGARIC_BLACK,
+                                  border_color=FLY_AGARIC_RED, border_width=2)
+        main_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
+        main_frame.grid_columnconfigure(0, weight=1)
+
+        # App Description
+        description_label = ctk.CTkLabel(main_frame, text=description, wraplength=380, justify="left")
+        description_label.grid(row=0, column=0, padx=15, pady=10, sticky="ew")
+
+        # Creator Info
+        creator_label = ctk.CTkLabel(main_frame, text=f"{get_translator().get('creator_label')}: Mirrowel", justify="left")
+        creator_label.grid(row=1, column=0, padx=15, pady=5, sticky="ew")
+
+        # GitHub Link
+        github_link = ctk.CTkLabel(main_frame, text=get_translator().get('github_link_label'), text_color="#6495ED", cursor="hand2")
+        github_link.grid(row=2, column=0, padx=15, pady=5, sticky="ew")
+        github_link.bind("<Button-1>", lambda e: self._open_link("https://github.com/Mirrowel"))
+
+        # Discord Link
+        discord_link = ctk.CTkLabel(main_frame, text=get_translator().get('discord_link_label'), text_color="#7289DA", cursor="hand2")
+        discord_link.grid(row=3, column=0, padx=15, pady=5, sticky="ew")
+        discord_link.bind("<Button-1>", lambda e: self._open_link("https://discord.gg/8MY5gn3gRC"))
+
+        self.grab_set()
+        self.focus_force()
+
+    def _open_link(self, url):
+        import webbrowser
+        webbrowser.open_new(url)
